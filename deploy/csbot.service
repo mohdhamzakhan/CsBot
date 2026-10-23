@@ -1,0 +1,18 @@
+[Unit]
+Description=CsBot trading workbench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=csbot
+WorkingDirectory=/opt/csbot
+ExecStart=/usr/bin/dotnet /opt/csbot/CsBot.dll
+EnvironmentFile=/etc/csbot.env
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
