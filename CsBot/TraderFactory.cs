@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 
 namespace CsBot;
 
@@ -20,27 +20,16 @@ public static class TraderFactory
         var risk = r.Risk ?? new RiskIn(0, 0, 1, 0);
         var cfg = new TraderConfig
         {
-            Mode = r.Mode == "live" ? "live" : "paper",
-            Market = m,
-            Exchange = r.Data.Exchange,
-            Symbol = r.Data.Symbol,
-            IntervalMin = r.Data.IntervalMin,
-            StrategyId = r.Strategy.Id,
-            Params = r.Strategy.Params,
-            Rules = r.Strategy.Rules,
-            Code = r.Strategy.Code,
-            Cost = cost,
-            Capital = r.Capital,
+            Mode = r.Mode == "live" ? "live" : "paper", Market = m, Exchange = r.Data.Exchange, Symbol = r.Data.Symbol, IntervalMin = r.Data.IntervalMin,
+            StrategyId = r.Strategy.Id, Params = r.Strategy.Params, Rules = r.Strategy.Rules, Code = r.Strategy.Code, Cost = cost, Capital = r.Capital,
             Risk = new RiskLimits(risk.MaxOrderNotional, risk.MaxPositionNotional, risk.MaxLeverage, risk.DailyLossPct),
-            PricePrecision = r.PricePrecision ?? 0,
-            QtyPrecision = r.QtyPrecision ?? 5
+            PricePrecision = r.PricePrecision ?? 0, QtyPrecision = r.QtyPrecision ?? 5
         };
         var cs = CoinSwitchClient.FromEnv();
         if (!cs.KeyMatchesSecret) { cs.Dispose(); throw new InvalidOperationException("Your secret key does not match your API key."); }
         return new Trader(cfg,
             (n, ct) => cs.GetCandlesAsync(m, cfg.Exchange, cfg.Symbol, cfg.IntervalMin, DateTime.UtcNow.AddMinutes(-(n + 2.0) * cfg.IntervalMin), DateTime.UtcNow, null, ct),
-            cs, factory, band, null, requestJson, restore, posOpenedAt)
-        { Owned = cs };
+            cs, factory, band, null, requestJson, restore, posOpenedAt) { Owned = cs };
     }
 }
 
@@ -58,20 +47,10 @@ public static class SessionResume
         var pos = SessionStore.LoadPosition();
         return new
         {
-            exists = true,
-            mode = s.Mode,
-            market = req.Data.Market,
-            symbol = req.Data.Symbol,
-            strategy = req.Strategy.Id,
-            intervalMin = req.Data.IntervalMin,
-            wasRunning = s.WasRunning,
-            savedAt = s.SavedAt,
-            hasPosition = pos != null,
-            side = pos?.Side,
-            units = pos?.Units,
-            entryPrice = pos?.EntryPrice,
-            openedAt = pos?.OpenedAt,
-            requiresConfirm = s.Mode == "live"
+            exists = true, mode = s.Mode, market = req.Data.Market, symbol = req.Data.Symbol, strategy = req.Strategy.Id, intervalMin = req.Data.IntervalMin,
+            strategyName = StrategyInfo.Describe(req.Strategy.Id, req.Strategy.Params, req.Strategy.Code).Name, strategyInfo = StrategyInfo.Describe(req.Strategy.Id, req.Strategy.Params, req.Strategy.Code), capital = req.Capital,
+            wasRunning = s.WasRunning, savedAt = s.SavedAt, hasPosition = pos != null, side = pos?.Side, units = pos?.Units, entryPrice = pos?.EntryPrice,
+            openedAt = pos?.OpenedAt, requiresConfirm = s.Mode == "live"
         };
     }
 

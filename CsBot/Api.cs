@@ -18,7 +18,7 @@ public sealed record TraderReq(string Mode, MarketRef Data, StrategyIn Strategy,
 
 public static class Api
 {
-    private static Market ParseMarket(string s) => s.Equals("futures", StringComparison.OrdinalIgnoreCase) ? Market.Futures : Market.Spot;
+    internal static Market ParseMarket(string s) => s.Equals("futures", StringComparison.OrdinalIgnoreCase) ? Market.Futures : Market.Spot;
     private static double? N(double x) => double.IsFinite(x) ? Math.Round(x, 6) : null;
     private static long T(DateTime d) => new DateTimeOffset(DateTime.SpecifyKind(d, DateTimeKind.Utc)).ToUnixTimeSeconds();
 
@@ -191,6 +191,12 @@ public static class Api
             catch (Exception e) { return Fail(e); }
         });
 
+        app.MapGet("/api/portfolio", async (string market, string? symbol, CancellationToken ct) =>
+        {
+            try { return Results.Ok(await PortfolioFeed.GetAsync(ParseMarket(market), symbol, ct)); }
+            catch (Exception e) { return Fail(e); }
+        });
+
         app.MapGet("/api/live", async (string market, string exchange, string symbol, int intervalMin, CancellationToken ct) =>
         {
             try { return Results.Ok(await LiveFeed.GetAsync(ParseMarket(market), exchange, symbol, intervalMin, ct)); }
@@ -204,6 +210,54 @@ public static class Api
                 var c = await CandleStore.GetAsync(ParseMarket(r.Market), r.Exchange, r.Symbol, r.IntervalMin, r.Days, false, null, ct);
                 return Results.Ok(new { candles = c.Select(x => new { t = T(x.Time), o = x.Open, h = x.High, l = x.Low, c = x.Close, v = x.Volume }), intervalSec = r.IntervalMin * 60 });
             }
+            catch (Exception e) { return Fail(e); }
+        });
+
+        // Equity curves of several parameter sets on the same data and costs, for drawing them on one chart.
+        app.MapPost("/api/curves", async (CurvesReq r, CancellationToken ct) =>
+        {
+            try
+            {
+                if (r.Strategy.Id == "rules") return Bad("Point-and-click rules have no numeric settings to compare.");
+                if (r.Sets == null || r.Sets.Count == 0 || r.Sets.Count > 8) return Bad("Pick between 1 and 8 settings to compare.");
+                var m = ParseMarket(r.Data.Market);
+                var candles = await CandleStore.GetAsync(m, r.Data.Exchange, r.Data.Symbol, r.Data.IntervalMin, r.Data.Days, false, null, ct);
+                if (candles.Count < 300) return Bad($"Only {candles.Count} candles; need at least 300.");
+                double bpy = 365.25 * 1440 / r.Data.IntervalMin, cash = r.StartCash ?? 100_000;
+                var cost = BuildCost(m, r.Costs);
+                var benchCost = new CostConfig { Market = Market.Spot, TakerFeePct = cost.TakerFeePct, GstPct = cost.GstPct, SlippagePct = cost.SlippagePct, TdsPct = cost.TdsPct, MaxLeverage = 1 };
+                int n = candles.Count, stride = Math.Max(1, (int)Math.Ceiling(n / 1500.0));
+                var idx = Enumerable.Range(0, n).Where(i => i % stride == 0 || i == n - 1).ToArray();
+                double[] Pick(double[] e) => idx.Select(i => Math.Round(e[i], 2)).ToArray();
+                var bench = Backtester.Run(new BuyAndHoldStrategy(), candles, benchCost, bpy, cash);
+                var curves = new object?[r.Sets.Count];
+                await Task.Run(() => Parallel.For(0, r.Sets.Count, new ParallelOptions { CancellationToken = ct }, i =>
+                {
+                    var pd = new Dictionary<string, JsonElement>(r.Strategy.Params ?? new());
+                    foreach (var kv in r.Sets[i]) pd[kv.Key] = JsonSerializer.SerializeToElement(kv.Value);
+                    var (factory, band) = StrategyRegistry.Create(r.Strategy.Id, pd, r.Strategy.Rules, m, bpy, cost.MaxLeverage, r.Strategy.Code);
+                    var res = Backtester.Run(factory(), candles, cost, bpy, cash, band);
+                    curves[i] = new { @params = r.Sets[i], equity = Pick(res.Equity), postTaxPct = N(res.PostTaxReturnPct) };
+                }), ct);
+                return Results.Ok(new { t = idx.Select(i => T(candles[i].Time)).ToArray(), bench = Pick(bench.Equity), curves });
+            }
+            catch (Exception e) { return Fail(e); }
+        });
+
+        app.MapPost("/api/optimize", async (OptimizeReq r, CancellationToken ct) =>
+        {
+            try
+            {
+                if (r.Strategy.Id == "rules") return Bad("Point-and-click rules have no numeric settings to search. Use a built-in strategy or a script with input() settings.");
+                var m = ParseMarket(r.Data.Market);
+                var candles = await CandleStore.GetAsync(m, r.Data.Exchange, r.Data.Symbol, r.Data.IntervalMin, r.Data.Days, false, null, ct);
+                if (candles.Count < 600) return Bad($"Only {candles.Count} candles; a parameter search needs at least 600. Increase the history or use a smaller timeframe.");
+                var cost = BuildCost(m, r.Costs);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct); cts.CancelAfter(TimeSpan.FromSeconds(120));
+                var result = await Task.Run(() => Optimizer.Run(candles, r.Data, r.Strategy, cost, r.StartCash ?? 100_000, r.Ranges ?? new(), Math.Clamp(r.TrainPct ?? 0.7, 0.5, 0.9), cts.Token), cts.Token);
+                return Results.Ok(result);
+            }
+            catch (OperationCanceledException) { return Bad("The search took longer than 2 minutes and was stopped. Use fewer combinations."); }
             catch (Exception e) { return Fail(e); }
         });
 
@@ -263,18 +317,9 @@ public static class Api
                     if (!GateStore.PassedRecently(key) && r.AllowUngated != true)
                         return Results.Json(new { error = "This exact strategy/settings has not passed the live gate in the last 24h. Run its backtest first (it must PASS), or explicitly allow ungated live trading." }, statusCode: 403);
                 }
-                var cfg = new TraderConfig
-                {
-                    Mode = live ? "live" : "paper", Market = m, Exchange = r.Data.Exchange, Symbol = r.Data.Symbol, IntervalMin = r.Data.IntervalMin,
-                    StrategyId = r.Strategy.Id, Params = r.Strategy.Params, Rules = r.Strategy.Rules, Code = r.Strategy.Code, Cost = cost, Capital = r.Capital,
-                    Risk = new RiskLimits(risk.MaxOrderNotional, risk.MaxPositionNotional, risk.MaxLeverage, risk.DailyLossPct),
-                    PricePrecision = r.PricePrecision ?? 0, QtyPrecision = r.QtyPrecision ?? 5
-                };
-                var cs = CoinSwitchClient.FromEnv();
-                if (!cs.KeyMatchesSecret) { cs.Dispose(); return Bad("Your secret key does not match your API key."); }
-                var t = new Trader(cfg,
-                    (n, ct) => cs.GetCandlesAsync(m, cfg.Exchange, cfg.Symbol, cfg.IntervalMin, DateTime.UtcNow.AddMinutes(-(n + 2.0) * cfg.IntervalMin), DateTime.UtcNow, null, ct),
-                    cs, factory, band) { Owned = cs };
+                if (mgr.Current is not { IsRunning: true } && SessionStore.LoadPosition() != null)
+                    return Bad("An earlier session still has an OPEN POSITION on record. Resume it or discard it first (see the banner on the Paper / Live tab).");
+                var t = TraderFactory.Build(r, TraderFactory.ToJson(r));
                 mgr.Start(t);
                 return Results.Ok(t.Status());
             }
@@ -284,5 +329,29 @@ public static class Api
         app.MapGet("/api/trader/status", (TraderManager mgr) => mgr.Current?.Status() ?? (object)new { state = "none", running = false });
         app.MapPost("/api/trader/stop", async (TraderManager mgr) => { if (mgr.Current != null) await mgr.Current.StopAsync(); return mgr.Current?.Status() ?? (object)new { state = "none" }; });
         app.MapPost("/api/trader/kill", async (TraderManager mgr) => { if (mgr.Current != null) await mgr.Current.KillAsync(); return mgr.Current?.Status() ?? (object)new { state = "none" }; });
+
+        // ---- saved position / session (survives restarts) ----
+        app.MapGet("/api/trader/session", (TraderManager mgr) => SessionResume.Describe(mgr));
+        app.MapPost("/api/trader/resume", (ResumeReq r, TraderManager mgr) =>
+        {
+            try { return Results.Ok(SessionResume.Resume(mgr, r.Confirm).Status()); } catch (Exception e) { return Fail(e); }
+        });
+        app.MapPost("/api/trader/discard", (TraderManager mgr) =>
+        {
+            if (mgr.Current is { IsRunning: true }) return Bad("Stop the running trader first.");
+            SessionStore.DeleteSession(); SessionStore.DeletePosition();
+            return Results.Ok(new { discarded = true });
+        });
+        app.MapPost("/api/trader/close", async (TraderManager mgr) =>
+        {
+            if (mgr.Current is not { IsRunning: true } t) return Bad("No trader is running.");
+            try { await t.CloseAsync(); return Results.Ok(t.Status()); } catch (Exception e) { return Fail(e); }
+        });
+        app.MapPost("/api/trader/forget", (TraderManager mgr) =>
+        {
+            if (mgr.Current is not { } t) return Bad("No trader.");
+            if (t.Config.Mode != "live") return Bad("Only needed for live trading.");
+            t.ForgetPosition(); return Results.Ok(t.Status());
+        });
     }
 }

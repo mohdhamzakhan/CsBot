@@ -22,6 +22,7 @@ builder.Services.AddSingleton<TraderManager>();
 builder.Services.Configure<ForwardedHeadersOptions>(o => o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto);   // trusts a reverse proxy on this same machine only
 var app = builder.Build();
 app.UseForwardedHeaders();
+_ = Task.Run(() => SessionResume.AutoResumeAsync(app.Services.GetRequiredService<TraderManager>()));   // bring back a paper trader that was running
 
 // Every API call needs a login when CS_APP_PASSWORD is set. If a proxy forwards traffic but no password is set, refuse (fail-safe against accidental exposure).
 app.Use(async (ctx, next) =>

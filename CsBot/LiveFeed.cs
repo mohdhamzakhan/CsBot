@@ -33,6 +33,11 @@ public static class LiveFeed
             LiveTick tick = m == Market.Spot
                 ? ParseSpot(await cs.SpotTickerAsync(exchange, symbol, ct))
                 : ParseFutures(await cs.FuturesTickerAsync(symbol, ct));
+            if (m == Market.Spot && (tick.Bid == null || tick.Ask == null))
+            {   // the spot ticker reports 0 for bid/ask, so read the best prices from the order book instead
+                try { var (bid, ask) = BestBidAsk(await cs.SpotDepthAsync(exchange, symbol, ct)); tick = tick with { Bid = bid, Ask = ask }; }
+                catch (Exception e) when (e is not OperationCanceledException) { /* leave them blank */ }
+            }
             if (tick.Price <= 0) throw new InvalidOperationException("The exchange returned no price for " + symbol);
             if (tick.At <= 0) tick = tick with { At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
             tick = tick with { Bar = await FormingBarAsync(cs, m, exchange, symbol, intervalMin, key, ct) };
@@ -45,8 +50,35 @@ public static class LiveFeed
     private static double Num(JsonElement e, string n) => CoinSwitchClient.Num(e, n);
     private static double? Opt(JsonElement e, string n) => e.TryGetProperty(n, out _) ? Num(e, n) : null;
 
+    private static double? Pos(double? x) => x is > 0 ? x : null;
+
+    /// <summary>Best (first) price of a book side. Accepts [[price, qty], ...] or [{"price": ...}, ...], numbers or strings.</summary>
+    private static double? FirstPrice(JsonElement side)
+    {
+        if (side.ValueKind != JsonValueKind.Array || side.GetArrayLength() == 0) return null;
+        var e = side[0];
+        double? Parse(JsonElement v) => v.ValueKind switch
+        {
+            JsonValueKind.Number => v.GetDouble(),
+            JsonValueKind.String when double.TryParse(v.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) => d,
+            _ => null
+        };
+        double? p = e.ValueKind switch
+        {
+            JsonValueKind.Array when e.GetArrayLength() > 0 => Parse(e[0]),
+            JsonValueKind.Object => new[] { "price", "p", "rate" }.Select(n => e.TryGetProperty(n, out var v) ? Parse(v) : null).FirstOrDefault(x => x != null),
+            _ => Parse(e)
+        };
+        return Pos(p);
+    }
+
+    public static (double? Bid, double? Ask) BestBidAsk(JsonElement book) =>
+        book.ValueKind == JsonValueKind.Object
+            ? (book.TryGetProperty("bids", out var b) ? FirstPrice(b) : null, book.TryGetProperty("asks", out var a) ? FirstPrice(a) : null)
+            : (null, null);
+
     public static LiveTick ParseSpot(JsonElement t) =>
-        new(Num(t, "lastPrice"), Opt(t, "bidPrice"), Opt(t, "askPrice"), Opt(t, "percentageChange"), Opt(t, "highPrice"),
+        new(Num(t, "lastPrice"), Pos(Opt(t, "bidPrice")), Pos(Opt(t, "askPrice")), Opt(t, "percentageChange"), Opt(t, "highPrice"),
             Opt(t, "lowPrice"), Opt(t, "quoteVolume"), (long)Num(t, "at"), null, null, null, null);
 
     public static LiveTick ParseFutures(JsonElement t) =>

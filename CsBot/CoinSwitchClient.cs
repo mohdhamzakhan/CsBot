@@ -173,6 +173,29 @@ public sealed class CoinSwitchClient : IDisposable
 
     // ---------------- orders ----------------
 
+    // ---------------- wallet / portfolio ----------------
+
+    public async Task<JsonElement> SpotPortfolioAsync(CancellationToken ct = default)
+    { using var d = await GetAsync("/trade/api/v2/user/portfolio", null, ct); return Data(d); }
+
+    public async Task<JsonElement> FuturesWalletAsync(CancellationToken ct = default)
+    { using var d = await GetAsync("/trade/api/v2/futures/wallet_balance", null, ct); return Data(d); }
+
+    public async Task<JsonElement> FuturesPositionsAsync(string symbol, CancellationToken ct = default)
+    {
+        foreach (var sym in new[] { symbol.ToUpperInvariant(), symbol.ToLowerInvariant() })
+        {
+            try
+            {
+                using var d = await GetAsync("/trade/api/v2/futures/positions",
+                    new[] { new KeyValuePair<string, string>("exchange", FuturesExchange), new KeyValuePair<string, string>("symbol", sym) }, ct);
+                return Data(d);
+            }
+            catch (HttpRequestException) when (sym != symbol.ToLowerInvariant()) { /* retry with lower-case symbol */ }
+        }
+        throw new InvalidOperationException("Futures positions unavailable.");
+    }
+
     // ---------------- live prices ----------------
 
     public async Task<JsonElement> SpotTickerAsync(string exchange, string symbol, CancellationToken ct = default)
@@ -186,6 +209,14 @@ public sealed class CoinSwitchClient : IDisposable
             foreach (var p in data.EnumerateObject()) return p.Value;
         }
         return data;
+    }
+
+    /// <summary>Order-book snapshot (bids sorted descending, asks ascending). Used for the best bid / ask, because the spot ticker reports 0 for them.</summary>
+    public async Task<JsonElement> SpotDepthAsync(string exchange, string symbol, CancellationToken ct = default)
+    {
+        using var d = await GetAsync("/trade/api/v2/depth",
+            new[] { new KeyValuePair<string, string>("exchange", exchange), new KeyValuePair<string, string>("symbol", symbol) }, ct);
+        return Data(d);
     }
 
     public async Task<JsonElement> FuturesTickerAsync(string symbol, CancellationToken ct = default)

@@ -42,6 +42,17 @@ dotnet run -- fees --exchange coinswitchx
 dotnet run -- cli --csv btc_6h.csv --market spot --compare --fee 0.04
 ```
 
+## Phone and desktop layout
+On a phone the app uses a bottom bar (Chart, Strategy, Settings, Trade) so everything is one tap away with no sideways scrolling; on a computer the
+settings sit in a panel beside the chart. Timeframes: 1m, 5m, 10m, 15m, 30m, 1h, 4h, 6h, 12h, 1D. The menu (top right) holds your API keys, the live-orders status,
+log out, and the required credit for the chart library (TradingView Lightweight Charts, Apache 2.0).
+
+## Open positions survive restarts
+While a paper or live position is open it is recorded in `data/state/open-position.json` (and the trader's bookkeeping in `data/state/trader-session.json`).
+The record is deleted as soon as the position closes: by the strategy, by the Close position button, or by the kill switch.
+When the app starts again a paper trader that was running resumes by itself; a live position is shown in a banner and only resumes when you confirm.
+If you closed a live position yourself on CoinSwitch, press "I already closed it on CoinSwitch" (or Discard) so the bot stops tracking it. The files hold no API keys.
+
 ## Chart and live prices
 The chart loads by itself whenever you change market, symbol, timeframe or history (no button). The last price refreshes every 3 seconds
 from CoinSwitch's ticker, and the current candle moves up and down with it; when a bar closes the final candle is fetched automatically.
@@ -64,6 +75,11 @@ A "Language reference" box in the editor lists everything. There is also a point
 - Exchange: `CoinSwitchClient.cs` (signing, candles, orders)
 - Trading engine and risk limits: `Trader.cs`
 - HTTP API: `Api.cs`
+
+## To run the aaplication
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+.\deploy.ps1 -Server 130.210.56.120 -Key "$env:USERPROFILE\.ssh\oracle_rsa"
 
 ## Safety design for live trading
 Off by default (needs CS_LIVE_ENABLED=1), typed confirmation phrase, mandatory max order / max position / daily loss / leverage limits,

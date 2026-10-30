@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from './api'
-import type { SavedScript, ScriptCheck, ScriptTemplate } from './api'
+import type { SavedScript, ScriptCheck, ScriptInput, ScriptTemplate } from './api'
 
-type Props = { code: string; setCode: (c: string) => void; params: Record<string, number>; setParams: (p: Record<string, number>) => void }
+type Props = { code: string; setCode: (c: string) => void; params: Record<string, number>; setParams: (p: Record<string, number>) => void; hidePickers?: boolean; onSavedChanged?: (name?: string) => void; onInputs?: (i: ScriptInput[]) => void }
 
 const HELP = `SERIES      open high low close volume hl2 hlc3 ohlc4 tr bar_index time
 CLOCK (UTC) minute_of_day  hour  day_index  tf_minutes (candle length)
@@ -41,7 +41,7 @@ CONTROL     if cond then long(1)            one line, or several actions:  if co
 RULES       Indicator functions (ema, rsi, ...) must be written at the top level, assigned to a variable,
             BEFORE you use them inside an if. Comments start with //`
 
-export default function ScriptEditor({ code, setCode, params, setParams }: Props) {
+export default function ScriptEditor({ code, setCode, params, setParams, hidePickers, onSavedChanged, onInputs }: Props) {
   const [templates, setTemplates] = useState<ScriptTemplate[]>([])
   const [saved, setSaved] = useState<SavedScript[]>([])
   const [check, setCheck] = useState<ScriptCheck | null>(null)
@@ -50,11 +50,11 @@ export default function ScriptEditor({ code, setCode, params, setParams }: Props
   const gutter = useRef<HTMLPreElement>(null)
 
   const loadSaved = () => api.scriptSaved().then(setSaved).catch(() => {})
-  useEffect(() => { api.scriptTemplates().then(t => { setTemplates(t); if (!code && t.length) setCode(t[0].code) }).catch(e => setMsg(e.message)); loadSaved() }, [])
+  useEffect(() => { api.scriptTemplates().then(t => { setTemplates(t); if (!hidePickers && !code && t.length) setCode(t[0].code) }).catch(e => setMsg(e.message)); loadSaved() }, [])
 
   useEffect(() => {
     if (!code.trim()) { setCheck(null); return }
-    const id = setTimeout(() => api.scriptCheck(code).then(setCheck).catch(e => setCheck({ ok: false, error: e.message })), 500)
+    const id = setTimeout(() => api.scriptCheck(code).then(c => { setCheck(c); if (c.ok && c.inputs) onInputs?.(c.inputs) }).catch(e => setCheck({ ok: false, error: e.message })), 500)
     return () => clearTimeout(id)
   }, [code])
 
@@ -65,12 +65,13 @@ export default function ScriptEditor({ code, setCode, params, setParams }: Props
 
   const save = async () => {
     setMsg('')
-    try { const r = await api.scriptSave(name, code); setMsg(`Saved as "${r.saved}"`); setName(''); loadSaved() } catch (e: any) { setMsg(e.message) }
+    try { const r = await api.scriptSave(name, code); setMsg(`Saved as "${r.saved}"`); setName(''); loadSaved(); onSavedChanged?.(r.saved) } catch (e: any) { setMsg(e.message) }
   }
   const tpl = templates.find(t => t.code === code)
 
   return (
     <div>
+      {!hidePickers && <>
       <label>Start from a template</label>
       <select value="" onChange={e => { const t = templates.find(x => x.id === e.target.value); if (t) replace(t.code) }}>
         <option value="">Load a template...</option>
@@ -84,6 +85,7 @@ export default function ScriptEditor({ code, setCode, params, setParams }: Props
           </select>
           <button className="ghost" title="Delete the saved script named in the box below" onClick={async () => { if (name && window.confirm(`Delete saved script "${name}"?`)) { await api.scriptDelete(name); setMsg('Deleted'); loadSaved() } }}>Del</button>
         </div></>}
+      </>}
       {tpl && <div className="note"><b>{tpl.name}:</b> {tpl.description}<br /><i>{tpl.evidence}</i></div>}
 
       <label>Script</label>

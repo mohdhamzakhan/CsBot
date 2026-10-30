@@ -52,7 +52,7 @@ export default function KeysDialog({ onClose, onSaved }: Props) {
         <input type="password" value={secret} onChange={e => setSecret(e.target.value)} placeholder="64 characters" autoComplete="off" spellCheck={false} style={{ fontFamily: 'var(--mono)' }} />
         {err && <div className="err">{err}</div>}
         {ok && <div className="note pos">{ok}</div>}
-        <button className="primary" disabled={busy || !apiKey.trim() || !secret.trim()} onClick={save}>{busy ? 'Verifying with CoinSwitch...' : 'Verify and save'}</button>
+        <button className="primary" style={{ marginTop: 14 }} disabled={busy || !apiKey.trim() || !secret.trim()} onClick={save}>{busy ? 'Verifying with CoinSwitch...' : 'Verify and save'}</button>
         </>)}
 
         <div className="note" style={{ marginTop: 12 }}>
