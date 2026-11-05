@@ -4,10 +4,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 KeyStore.LoadIntoEnvironment();   // pick up saved API keys / app password (see KeyStore.cs) before anything needs them
 Auth.Init();
 
-// Web app:  dotnet run            -> http://localhost:5080  (React UI + API)
-// CLI:      dotnet run -- cli --csv btc_6h.csv --compare   |   dotnet run -- fetch ...   |   dotnet run -- fees ...
-if (args.Length > 0 && args[0] is "cli" or "fetch" or "fees") { await Cli.RunAsync(args); return; }
-
+// Web app:  dotnet run  ->  http://localhost:5080  (React UI + API)
 string url = Environment.GetEnvironmentVariable("CS_URL") ?? "http://localhost:5080";
 bool loopbackOnly = url.Split(';', StringSplitOptions.RemoveEmptyEntries).All(x =>
     x.Contains("localhost", StringComparison.OrdinalIgnoreCase) || x.Contains("127.0.0.1") || x.Contains("[::1]"));

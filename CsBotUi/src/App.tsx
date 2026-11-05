@@ -17,6 +17,7 @@ import WalletPanel from './WalletPanel'
 import OptimizePanel from './OptimizePanel'
 import type { OptDef } from './OptimizePanel'
 import OptimizeResults from './OptimizeResults'
+import OptionsLab from './OptionsLab'
 import type { Curves } from './api'
 
 /** Your last choices (market, symbol, timeframe, strategy, settings, costs) are kept in this browser so the app opens where you left it. */
@@ -44,7 +45,7 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
   const [saved0] = useState(readStore)                       // what was remembered from the last visit
   const last = useRef<Record<string, LastView>>(saved0.last ?? {})   // last symbol / timeframe used on each market
   const restoredParams = useRef(!!saved0.params && !!saved0.sid)
-  const [side, setSide] = useState<'strategy' | 'costs' | 'trade' | 'wallet'>('strategy')
+  const [side, setSide] = useState<'strategy' | 'costs' | 'trade' | 'wallet' | 'options'>('strategy')
   const [view, setView] = useState<'chart' | 'panel'>('chart')   // phone only: which full screen is showing
   const [menuOpen, setMenuOpen] = useState(false)
   const [health, setHealth] = useState<{ hasKeys: boolean; keyMatchesSecret: boolean; liveEnabled: boolean } | null>(null)
@@ -217,6 +218,13 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
     catch (e: any) { setErr(e.message) }
   }
   const num = (k: keyof Costs) => (e: React.ChangeEvent<HTMLInputElement>) => setCosts(c => ({ ...c, [k]: +e.target.value }))
+  // recent realised volatility (annualised, %) of the chart's candles: a sensible starting point for option prices
+  const hv = useMemo(() => {
+    const c = chartCandles.slice(-240).map(x => x.c); if (c.length < 30) return null
+    const r = c.slice(1).map((v, i) => Math.log(v / c[i])), m = r.reduce((a, b) => a + b, 0) / r.length
+    return Math.sqrt(r.reduce((a, b) => a + (b - m) * (b - m), 0) / (r.length - 1)) * Math.sqrt(365.25 * 1440 / data.intervalMin) * 100
+  }, [chartCandles, data.intervalMin])
+  const optBase = (['BTC', 'ETH', 'SOL'].find(b => data.symbol.toUpperCase().startsWith(b)) ?? 'BTC') as 'BTC' | 'ETH' | 'SOL'
   const keysOk = !!health?.hasKeys && !!health?.keyMatchesSecret
   // Use YOUR real spot fee instead of the conservative 0.4% default (otherwise every result looks about 10x more expensive than it is)
   useEffect(() => {
@@ -236,7 +244,7 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
       <Toolbar data={data} onMarket={switchMarket} onSymbol={setSymbol} onInterval={changeTimeframe} />
       <Stats live={live} market={data.market} wallet={wallet} onWallet={() => nav('wallet')} />
 
-      <div className="workspace" data-view={view}>
+      <div className="workspace" data-view={view} data-opt={side === 'options' ? '1' : '0'}>
         <main>
           <ChartPanel candles={chartCandles} overlays={bt?.overlays ?? []} fills={bt?.fills ?? []} splitTime={opt?.trainEnd ?? null} intervalSec={data.intervalMin * 60} live={live} liveError={liveErr}
             loading={chartLoading} error={chartErr} title={data.symbol} subtitle={`${tfLabel} · ${futures ? 'USDT perpetual' : 'spot'}`}
@@ -255,6 +263,7 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
             <button className={side === 'costs' ? 'on' : ''} onClick={() => setSide('costs')}>Costs &amp; data</button>
             <button className={side === 'trade' ? 'on' : ''} onClick={() => setSide('trade')}>Paper / Live{tradeActive ? ' \u25CF' : ''}</button>
             <button className={side === 'wallet' ? 'on' : ''} onClick={() => { setSide('wallet'); loadWallet(true) }}>Wallet</button>
+            <button className={side === 'options' ? 'on' : ''} onClick={() => setSide('options')}>Options</button>
           </div>
           <div className="sidebody">
             {side === 'strategy' && (<>
@@ -301,12 +310,14 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
               <div className="note">{futures ? 'Futures TDS defaults to 0: confirm how CoinSwitch applies it to derivatives, then enter it here.' : 'Default fee is the conservative worst case. Spot TDS is a refundable credit but locks cash on each sell.'}</div>
             </>)}
 
+            {side === 'options' && <OptionsLab baseHint={optBase} hv={hv} loadPrice={base => api.live({ market: 'futures', exchange: 'EXCHANGE_2', symbol: base + 'USDT', intervalMin: 60, days: 1 }).then(t => t.price)} />}
+
             {side === 'wallet' && <WalletPanel wallet={wallet} error={walletErr} loading={walletLoading} market={data.market} symbol={data.symbol} hasKeys={keysOk} onRefresh={() => loadWallet(true)} />}
 
             {side === 'trade' && <TraderPanel data={data} strategy={strategyIn} costs={costs} liveEnabled={!!health?.liveEnabled} hasKeys={keysOk} quote={quote}
               st={trader} session={session} onRefresh={refreshTrader} />}
           </div>
-          {side !== 'trade' && side !== 'wallet' && (
+          {side !== 'trade' && side !== 'wallet' && side !== 'options' && (
             <div className="sidefoot">
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="primary" style={{ flex: 1, width: 'auto', marginTop: 0 }} disabled={busy} onClick={() => run(false)}>{busy ? 'Working...' : 'Run backtest'}</button>
