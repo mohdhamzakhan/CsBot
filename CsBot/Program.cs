@@ -44,5 +44,6 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.MapAuth();
 app.MapApi();
+app.MapResearch();
 app.MapFallbackToFile("index.html");
 app.Run(url);
