@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, ColorType, CrosshairMode, IChartApi, ISeriesApi, UTCTimestamp, LineStyle } from 'lightweight-charts'
 import type { Candle, FillPt, LiveTick, Overlay } from './api'
+import type { IPriceLine } from 'lightweight-charts'
 import { nextForming } from './liveCandle'
 import type { Forming } from './liveCandle'
 
 type Props = {
   candles: Candle[]; overlays: Overlay[]; fills: FillPt[]; intervalSec: number; live: LiveTick | null; liveError: string
   loading: boolean; error: string; title: string; subtitle: string; viewKey: string; onNewBar: () => void; onReload: () => void
-  height: number; indHeight: number; splitTime?: number | null
+  height: number; indHeight: number; splitTime?: number | null; levels?: { price: number; color: string; title: string }[]
 }
 
 export const chartBase = {
@@ -23,11 +24,12 @@ const precisionFor = (p: number) => (p >= 100000 ? 0 : p >= 1000 ? 2 : p >= 1 ? 
 const fmt = (x: number, p: number) => x.toLocaleString(undefined, { minimumFractionDigits: p, maximumFractionDigits: p })
 
 export default function ChartPanel(props: Props) {
-  const { candles, overlays, fills, intervalSec, live, loading, error, title, subtitle, viewKey, splitTime } = props
+  const { candles, overlays, fills, intervalSec, live, loading, error, title, subtitle, viewKey, splitTime, levels } = props
   const priceEl = useRef<HTMLDivElement>(null), indEl = useRef<HTMLDivElement>(null)
   const priceChart = useRef<IChartApi | null>(null), indChart = useRef<IChartApi | null>(null)
   const splitS = useRef<ISeriesApi<'Area'> | null>(null)
   const lastFills = useRef<unknown>(null)
+  const lineRefs = useRef<IPriceLine[]>([])
   const candleS = useRef<ISeriesApi<'Candlestick'> | null>(null), volS = useRef<ISeriesApi<'Histogram'> | null>(null)
   const lineS = useRef<ISeriesApi<'Line'>[]>([]), indS = useRef<ISeriesApi<'Line'>[]>([])
   const forming = useRef<Forming | null>(null)
@@ -108,6 +110,13 @@ export default function ChartPanel(props: Props) {
     if (splitTime && fills.length && lastFills.current !== fills) { lastFills.current = fills; pc.timeScale().fitContent() }   // a setting was just drawn: show the whole history so the test boundary is visible
     applyLive()
   }, [candles, overlays, fills, viewKey, prec, applyLive, splitTime])
+
+  // dashed horizontal lines at the prices where the strategy will buy / exit / short
+  useEffect(() => {
+    const cs = candleS.current; if (!cs) return
+    lineRefs.current.forEach(l => { try { cs.removePriceLine(l) } catch { /* already gone */ } }); lineRefs.current = []
+    for (const l of levels ?? []) lineRefs.current.push(cs.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: l.title }))
+  }, [levels, candles.length > 0])
 
   const shown = legend ?? (candles.length ? (() => { const c = candles[candles.length - 1]; return { o: c.o, h: c.h, l: c.l, c: c.c } })() : null)
   const up = shown ? shown.c >= shown.o : true

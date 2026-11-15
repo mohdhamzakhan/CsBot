@@ -7,4 +7,8 @@
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Files that older packages contained and newer ones removed. Unzipping a new package over an old folder does not delete them, so they are excluded here. -->
+    <Compile Remove="Cli.cs" />
+  </ItemGroup>
 </Project>

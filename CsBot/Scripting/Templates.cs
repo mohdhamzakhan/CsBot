@@ -359,6 +359,26 @@ end
 if position == 1 and close < vw and emaF < emaS then flat()
 if position == -1 and close > vw and emaF > emaS then flat()
 """),
+        new ScriptTemplate("dip_buyer", "Buy the dip (fall from recent high)", "Buys after the price has fallen a set percentage below its recent high, then sells on a bounce (take profit) or a stop-loss. The opposite of a breakout strategy: it buys weakness. Long only.",
+            "Dip-buying is mean reversion: weak evidence in crypto. In a long slide it keeps buying into falls, so the stop-loss is essential, and every trade pays fees and TDS. Test it on a long history before trusting it.", """
+// Buy the dip: enter after a fall of dropPct from the recent high, exit on a bounce or a stop.
+lookback = input(20, "Recent-high look-back (bars)", 5, 300, 1)
+dropPct = input(5, "Buy after a fall of (%)", 1, 40, 0.5)
+takePct = input(4, "Take profit (%)", 0, 30, 0.5)
+stopPct = input(8, "Stop-loss (%)", 0, 40, 0.5)
+cooldown = input(6, "Wait this many bars after an exit", 0, 100, 1)
+trendLen = input(0, "Only buy while above this EMA (0 = off)", 0, 400, 1)
+
+recentHigh = highest(high, lookback)
+trend = ema(close, max(trendLen, 2))
+drawdown = (recentHigh - close) / recentHigh * 100
+okTrend = trendLen == 0 or close > trend
+plot(recentHigh, "Recent high")
+plot(recentHigh * (1 - dropPct / 100), "Buy zone")
+stop_loss(stopPct)
+take_profit(takePct)
+if position == 0 and drawdown >= dropPct and okTrend and not (bars_since_exit < cooldown) then long(1)
+"""),
         new ScriptTemplate("blank", "Blank starter", "Minimal skeleton: a plotted EMA and a simple rule. Replace with your own idea.", "Your own idea: test it with the same costs, walk-forward check and live gate.", """
 // Your strategy. Lines starting with // are comments.
 len = input(50, "EMA length", 5, 300, 1)

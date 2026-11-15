@@ -261,6 +261,23 @@ public static class Api
             catch (Exception e) { return Fail(e); }
         });
 
+        // Prices at which the strategy would buy / exit / short, found by asking the real strategy about many hypothetical closes.
+        app.MapPost("/api/triggers", async (TriggersReq r, CancellationToken ct) =>
+        {
+            try
+            {
+                if (r.Strategy.Id == "rules" && r.Strategy.Rules == null) return Bad("Missing rules.");
+                var m = ParseMarket(r.Data.Market);
+                // load exactly as much history as the trader itself uses (warm-up + 400 candles), whatever timeframe the chart is showing
+                var (probe, _) = StrategyRegistry.Create(r.Strategy.Id, r.Strategy.Params, r.Strategy.Rules, m, 365.25 * 1440 / r.Data.IntervalMin, m == Market.Futures ? 3 : 1, r.Strategy.Code);
+                int need = Math.Min(1500, probe().WarmupBars + 400), days = (int)Math.Ceiling(need * r.Data.IntervalMin / 1440.0) + 3;
+                var candles = await CandleStore.GetAsync(m, r.Data.Exchange, r.Data.Symbol, r.Data.IntervalMin, days, false, null, ct);
+                var result = await Task.Run(() => Triggers.Compute(candles, r.Data, r.Strategy), ct);
+                return Results.Ok(result);
+            }
+            catch (Exception e) { return Fail(e); }
+        });
+
         app.MapPost("/api/backtest", async (BacktestReq r, CancellationToken ct) =>
         {
             try

@@ -10,6 +10,38 @@ const PHRASE = 'I UNDERSTAND THE RISKS'
 const countdown = (sec: number) => { if (sec <= 0) return 'any moment'; const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60; return `${h > 0 ? h + 'h ' : ''}${m}m ${String(x).padStart(2, '0')}s` }
 const tfName = (m: number) => (m >= 1440 ? `${m / 1440}D` : m >= 60 ? `${m / 60}h` : `${m}m`)
 
+// Helper to convert UTC time-only strings (e.g., "01:08:36") to the user's Local Time
+const formatLogLine = (line: string) => {
+  const timeMatch = line.match(/^(\d{2}):(\d{2}):(\d{2})/);
+  if (timeMatch) {
+    const [, h, m, s] = timeMatch.map(Number);
+    
+    // Create a date object using today's date, but interpreted as UTC
+    const now = new Date();
+    const utcDate = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      h, m, s
+    ));
+
+    // Format using local time getters
+    const localH = String(utcDate.getHours()).padStart(2, '0');
+    const localM = String(utcDate.getMinutes()).padStart(2, '0');
+    const localS = String(utcDate.getSeconds()).padStart(2, '0');
+
+    // Replace the timestamp at the beginning of the line
+    return line.replace(/^(\d{2}:\d{2}:\d{2})/, `${localH}:${localM}:${localS}`);
+  }
+
+  // Fallback for full ISO/UTC timestamps
+  return line.replace(/\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|UTC)?)\b/g, (match) => {
+    const normalized = match.endsWith('UTC') ? match.replace('UTC', 'Z') : match;
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? match : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  });
+}
+
 /** Which strategy is running, with every setting (changed ones highlighted), the costs it assumes, and the script if it is one. */
 function StrategyCard({ info, quote }: { info: TraderInfo; quote: string }) {
   const s = info.strategy, c = info.costs
@@ -176,7 +208,8 @@ export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKey
             <tbody>{(st.fills ?? []).slice().reverse().map((f, i) => (
               <tr key={i}><td>{new Date(f.t * 1000).toLocaleString()}</td><td className={f.side === 'buy' ? 'pos' : 'neg'}>{f.side}</td><td>{f.price.toFixed(2)}</td><td>{f.qty.toFixed(6)}</td></tr>))}</tbody></table></div>
           <label>Log</label>
-          <div className="log">{(st.log ?? []).join('\n')}</div>
+          {/* <div className="log">{(st.log ?? []).join('\n')}</div> */}
+          <div className="log">{(st.log ?? []).map(formatLogLine).join('\n')}</div>
         </div>
       </>)}
     </div>

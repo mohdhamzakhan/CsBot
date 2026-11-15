@@ -34,6 +34,11 @@ export type OptResult = {
 }
 export type CurveSet = { params: Record<string, number>; equity: number[]; postTaxPct: number | null }
 export type Curves = { t: number[]; bench: number[]; curves: CurveSet[] }
+export type Trigger = { price: number; pct: number; below: string; above: string }
+export type TriggerResult = {
+  lastClose: number; current: string; boundaries: Trigger[]; nextDecisionAt: number; barsUsed: number
+  levels: { side: string; entry: number; stop: number | null; target: number | null } | null
+}
 export type KeysStatus = { canEditKeys: boolean; hasKeys: boolean; source: string | null; savePath: string; apiKeyPreview: string; canRemove: boolean }
 export type Candle = { t: number; o: number; h: number; l: number; c: number; v: number }
 export type Pt = { t: number; v: number }
@@ -76,7 +81,7 @@ export type BacktestResp = {
 export type TraderStatus = {
   state: string; running: boolean; mode?: string; symbol?: string; market?: string; strategy?: string; lastPrice?: number
   lastClose?: number; lastCheckAgeSec?: number | null; lastError?: string; priceAgeSec?: number | null; priceError?: string; nextDecision?: number | null
-  strategyName?: string; config?: TraderInfo
+  lastBar?: number | null; strategyName?: string; config?: TraderInfo
   targetWeight?: number; account?: Record<string, number | boolean | string>
   fills?: { t: number; side: string; price: number; qty: number; fee: number }[]; log?: string[]
 }
@@ -121,6 +126,7 @@ export const api = {
     call<OptResult>('/api/optimize', { data: d, strategy: s, costs, startCash, ranges, trainPct }),
   curves: (d: MarketRef, s: StrategyIn, costs: Costs, startCash: number, sets: Record<string, number>[]) =>
     call<Curves>('/api/curves', { data: d, strategy: s, costs, startCash, sets }),
+  triggers: (d: MarketRef, s: StrategyIn) => call<TriggerResult>('/api/triggers', { data: d, strategy: s }),
   traderSession: () => call<SessionInfo>('/api/trader/session'),
   traderResume: (confirm?: string) => call<TraderStatus>('/api/trader/resume', { confirm }),
   traderDiscard: () => call<{ discarded: boolean }>('/api/trader/discard', {}),

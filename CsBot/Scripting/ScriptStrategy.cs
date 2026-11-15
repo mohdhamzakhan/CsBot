@@ -23,6 +23,9 @@ public sealed class ScriptStrategy : IStrategy
         return (c.Inputs, c.Warmup);
     }
 
+    /// <summary>Open position and its price levels as the script sees them right now (used to show stop / target orders).</summary>
+    public (int Position, double Entry, double Stop, double Target) Levels => ((int)_c.Position, _c.Entry, _c.StopPx, _c.TargetPx);
+
     public IEnumerable<PlotSeries> Plots => _p.Plots.Select(p => new PlotSeries(p.Title, p.Color, p.Pane, p.Values.ToArray()));
 
     public Decision OnCandle(Candle k)

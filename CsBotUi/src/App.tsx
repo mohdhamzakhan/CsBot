@@ -18,6 +18,8 @@ import OptimizePanel from './OptimizePanel'
 import type { OptDef } from './OptimizePanel'
 import OptimizeResults from './OptimizeResults'
 import OptionsLab from './OptionsLab'
+import TriggerCard, { act, actColor } from './TriggerCard'
+import type { TriggerResult } from './api'
 import type { Curves } from './api'
 
 /** Your last choices (market, symbol, timeframe, strategy, settings, costs) are kept in this browser so the app opens where you left it. */
@@ -77,6 +79,10 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
   const [info, setInfo] = useState('')
   const reqId = useRef(0)
   const optRef = useRef<HTMLDivElement>(null)
+  const [trig, setTrig] = useState<TriggerResult | null>(null)
+  const [trigErr, setTrigErr] = useState('')
+  const [trigBusy, setTrigBusy] = useState(false)
+  const trigReq = useRef(0)
   const [scriptInputs, setScriptInputs] = useState<ScriptInput[]>([])
   const [opt, setOpt] = useState<OptResult | null>(null)
   const [optBusy, setOptBusy] = useState(false)
@@ -158,6 +164,48 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey])
   useEffect(() => { setLive(null); setLiveErr(''); const id = setTimeout(() => loadChart(false), 350); return () => clearTimeout(id) }, [dataKey, loadChart])
+
+  // ---- where the strategy acts: the running strategy if there is one on this chart, otherwise the selected one ----
+  const pickName = pick.startsWith('b:') ? builtins.find(s => s.id === pick.slice(2))?.name : pick.startsWith('t:') ? templates.find(t => t.id === pick.slice(2))?.name
+    : pick.startsWith('s:') ? pick.slice(2) : pick === 'rules' ? 'Point-and-click rules' : 'Custom script'
+  const tfName = (m: number) => (m >= 1440 ? `${m / 1440}D` : m >= 60 ? `${m / 60}h` : `${m}m`)
+  // Follow the trader that is actually running (or still holding a position) on ITS OWN timeframe - even if the chart shows a different one.
+  const trigSrc = useMemo(() => {
+    const c = trader?.config, acct = trader?.account as Record<string, any> | undefined
+    const side = acct ? String(acct.side) : 'flat'
+    if (trader && c && (trader.running || side !== 'flat') && c.strategy.id !== 'rules')
+      return {
+        source: (trader.running ? 'running' : 'stopped') as 'running' | 'stopped', name: c.strategy.name, tf: tfName(c.intervalMin),
+        market: c.market, symbol: c.symbol, quote: c.market === 'futures' ? 'USDT' : (c.symbol.split('/')[1] ?? 'INR'),
+        data: { market: c.market as Market, exchange: c.exchange, symbol: c.symbol, intervalMin: c.intervalMin, days: 30 },
+        strategy: { id: c.strategy.id, params: Object.fromEntries(c.strategy.parameters.map(p => [p.key, p.value])), code: c.strategy.code ?? undefined },
+        holding: side !== 'flat' ? { side, entry: Number(acct!.entryPrice), units: Number(acct!.units) } : null,
+      }
+    return { source: 'selected' as const, name: pickName ?? 'strategy', tf: tfLabel, market: data.market, symbol: data.symbol, quote, data, strategy: strategyIn, holding: null }
+  }, [trader, data, pickName, strategyIn, tfLabel, quote])
+  const trigKey = JSON.stringify(trigSrc.strategy) + '|' + trigSrc.data.market + trigSrc.data.exchange + trigSrc.data.symbol + trigSrc.data.intervalMin + '|' + (trigSrc.source === 'selected' ? chartCandles.length : trader?.lastBar)
+  const loadTriggers = useCallback(() => {
+    const id = ++trigReq.current
+    if (trigSrc.strategy.id === 'script' && !trigSrc.strategy.code) return
+    if (trigSrc.source === 'selected' && chartCandles.length < 60) return
+    setTrigBusy(true)
+    api.triggers(trigSrc.data, trigSrc.strategy as any).then(r => { if (id === trigReq.current) { setTrig(r); setTrigErr('') } })
+      .catch(e => { if (id === trigReq.current) { setTrigErr(e.message); setTrig(null) } }).finally(() => { if (id === trigReq.current) setTrigBusy(false) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigKey])
+  useEffect(() => { const t = setTimeout(loadTriggers, 700); return () => clearTimeout(t) }, [loadTriggers])
+  useEffect(() => { if (trigSrc.source === 'selected') return; const id = setInterval(() => { if (!document.hidden) loadTriggers() }, 60000); return () => clearInterval(id) }, [loadTriggers, trigSrc.source])
+  const triggerLines = useMemo(() => {
+    if (!trig || trigSrc.symbol !== data.symbol || trigSrc.market !== data.market) return []     // price lines only make sense on the chart of the same instrument
+    const out: { price: number; color: string; title: string }[] = []
+    for (const b of trig.boundaries) {
+      const a = b.below === trig.current ? act(trig.current, b.above) : b.above === trig.current ? act(trig.current, b.below) : null
+      out.push({ price: b.price, color: a ? actColor(a) : '#8793ab', title: a ? `${a.split(' ')[0]} ${b.below === trig.current ? 'above' : 'below'}` : 'trigger' })
+    }
+    if (trig.levels?.stop != null) out.push({ price: trig.levels.stop, color: '#ef5350', title: 'stop order' })
+    if (trig.levels?.target != null) out.push({ price: trig.levels.target, color: '#26a69a', title: 'target order' })
+    return out
+  }, [trig, trigSrc.symbol, trigSrc.market, data.symbol, data.market])
 
   // ---- live price: poll every 3 seconds (paused while the tab is hidden) ----
   useEffect(() => {
@@ -246,10 +294,11 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
 
       <div className="workspace" data-view={view} data-opt={side === 'options' ? '1' : '0'}>
         <main>
-          <ChartPanel candles={chartCandles} overlays={bt?.overlays ?? []} fills={bt?.fills ?? []} splitTime={opt?.trainEnd ?? null} intervalSec={data.intervalMin * 60} live={live} liveError={liveErr}
+          <ChartPanel candles={chartCandles} overlays={bt?.overlays ?? []} fills={bt?.fills ?? []} splitTime={opt?.trainEnd ?? null} levels={triggerLines} intervalSec={data.intervalMin * 60} live={live} liveError={liveErr}
             loading={chartLoading} error={chartErr} title={data.symbol} subtitle={`${tfLabel} · ${futures ? 'USDT perpetual' : 'spot'}`}
             viewKey={dataKey} onNewBar={() => loadChart(true)} onReload={() => loadChart(false)} height={vp.chartH} indHeight={vp.indH} />
           <PositionStrip trader={trader} session={session} quote={quote} onManage={() => nav('trade')} />
+          <TriggerCard res={trig} error={trigErr} busy={trigBusy} live={trigSrc.symbol === data.symbol && trigSrc.market === data.market ? live?.price ?? null : null} quote={trigSrc.quote} tfLabel={trigSrc.tf} source={trigSrc.source} name={trigSrc.name} holding={trigSrc.holding} onRefresh={loadTriggers} />
           {opt && <div ref={optRef} style={{ scrollMarginTop: 70 }}><OptimizeResults res={opt} onShow={p => run(false, p, 'chart')} loadCurves={sets => api.curves(data, strategyIn, costs, startCash, sets) as Promise<Curves>} onClose={() => setOpt(null)} /></div>}
           <div ref={resultsRef} style={{ scrollMarginTop: 70 }}>
             {bt ? <Results r={bt} def={def} quote={quote} /> : (
