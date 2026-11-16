@@ -349,25 +349,25 @@ button {
 }
 
 .side {
-  position: sticky;
-  top: 74px;
-  height: calc(100vh - 88px);
-  max-height: calc(100vh - 88px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  overflow: hidden;
+    position: sticky;
+    top: 74px;
+    height: calc(100vh - 88px);
+    max-height: calc(100vh - 88px);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
 }
 
 .sidebody {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 14px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px;
 }
 
 .sidetabs {
@@ -1228,4 +1228,45 @@ code {
         .posstrip .grow {
             flex-basis: 100%;
         }
+
+    @media (max-width: 900px) {
+        html,
+        body,
+        #root {
+            height: auto;
+            min-height: 100%;
+        }
+
+        body {
+            overflow-x: hidden;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .app {
+            height: auto;
+            min-height: 100dvh;
+            overflow: visible;
+        }
+
+        .workspace {
+            display: block;
+            height: auto;
+            min-height: 0;
+            overflow: visible;
+            padding-bottom: calc( var(--nav-h) + 30px + env(safe-area-inset-bottom) );
+        }
+
+        .side,
+        .sidebody {
+            height: auto;
+            max-height: none;
+            min-height: 0;
+            overflow: visible;
+        }
+
+        .sidebody {
+            display: block;
+        }
+    }
 }
