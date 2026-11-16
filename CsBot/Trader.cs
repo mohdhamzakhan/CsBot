@@ -82,155 +82,155 @@ public sealed class PaperExecutor : IExecutor
 /// orders confirmed by polling the exchange; unfilled spot limit orders are cancelled.
 /// Position is tracked from confirmed fills only. NOT validated against the live exchange by the author - start tiny.
 /// </summary>
-public sealed class LiveExecutor : IExecutor
-{
-    private readonly CoinSwitchClient _cs; private readonly TraderConfig _cfg; private readonly double _band; private readonly Action<string> _log;
-    private readonly List<Fill> _fills = new();
-    private double _avg, _realized, _fees; private int _orders;
-    public double Units { get; private set; }
-    public bool Halted { get; private set; }
-    public string HaltReason { get; private set; } = "";
-    public IReadOnlyList<Fill> Fills => _fills;
+//public sealed class LiveExecutor : IExecutor
+//{
+//    private readonly CoinSwitchClient _cs; private readonly TraderConfig _cfg; private readonly double _band; private readonly Action<string> _log;
+//    private readonly List<Fill> _fills = new();
+//    private double _avg, _realized, _fees; private int _orders;
+//    public double Units { get; private set; }
+//    public bool Halted { get; private set; }
+//    public string HaltReason { get; private set; } = "";
+//    public IReadOnlyList<Fill> Fills => _fills;
 
-    public LiveExecutor(CoinSwitchClient cs, TraderConfig cfg, double band, Action<string> log) { _cs = cs; _cfg = cfg; _band = band; _log = log; }
+//    //public LiveExecutor(CoinSwitchClient cs, TraderConfig cfg, double band, Action<string> log) { _cs = cs; _cfg = cfg; _band = band; _log = log; }
 
-    public async Task InitAsync(CancellationToken ct)
-    {
-        if (_cfg.Market == Market.Futures)
-        {
-            int lev = (int)Math.Max(1, Math.Floor(Math.Min(_cfg.Risk.MaxLeverage, _cfg.Cost.MaxLeverage)));
-            await _cs.FuturesSetLeverageAsync(_cfg.Symbol, lev, ct);
-            _log($"Futures leverage set to {lev}x on {_cfg.Symbol}");
-        }
-    }
+//    public async Task InitAsync(CancellationToken ct)
+//    {
+//        if (_cfg.Market == Market.Futures)
+//        {
+//            int lev = (int)Math.Max(1, Math.Floor(Math.Min(_cfg.Risk.MaxLeverage, _cfg.Cost.MaxLeverage)));
+//            await _cs.FuturesSetLeverageAsync(_cfg.Symbol, lev, ct);
+//            _log($"Futures leverage set to {lev}x on {_cfg.Symbol}");
+//        }
+//    }
 
-    public ExecutorState Export() => new(new Dictionary<string, double> { ["units"] = Units, ["avg"] = _avg, ["realized"] = _realized, ["fees"] = _fees, ["orders"] = _orders }, _fills.ToList());
-    public void Import(ExecutorState s)
-    {
-        double G(string k) => s.Num.TryGetValue(k, out var v) ? v : 0;
-        Units = G("units"); _avg = G("avg"); _realized = G("realized"); _fees = G("fees"); _orders = (int)G("orders");
-        _fills.Clear(); _fills.AddRange(s.Fills);
-    }
-    public bool ForgetPosition()
-    {
-        if (Units == 0) return false;
-        _log($"Forgot tracked position {Units} @ {_avg} (you closed it yourself outside this app). No orders were sent.");
-        Units = 0; _avg = 0; return true;
-    }
+//    public ExecutorState Export() => new(new Dictionary<string, double> { ["units"] = Units, ["avg"] = _avg, ["realized"] = _realized, ["fees"] = _fees, ["orders"] = _orders }, _fills.ToList());
+//    public void Import(ExecutorState s)
+//    {
+//        double G(string k) => s.Num.TryGetValue(k, out var v) ? v : 0;
+//        Units = G("units"); _avg = G("avg"); _realized = G("realized"); _fees = G("fees"); _orders = (int)G("orders");
+//        _fills.Clear(); _fills.AddRange(s.Fills);
+//    }
+//    public bool ForgetPosition()
+//    {
+//        if (Units == 0) return false;
+//        _log($"Forgot tracked position {Units} @ {_avg} (you closed it yourself outside this app). No orders were sent.");
+//        Units = 0; _avg = 0; return true;
+//    }
 
-    public void Halt(string reason) { if (!Halted) { Halted = true; HaltReason = reason; _log("HALTED: " + reason); } }
-    public void AccrueFunding(double price, double hours) { }
-    public double Equity(double price) => _cfg.Capital + _realized - _fees + Units * (price - _avg) * (Units == 0 ? 0 : 1);
+//    public void Halt(string reason) { if (!Halted) { Halted = true; HaltReason = reason; _log("HALTED: " + reason); } }
+//    public void AccrueFunding(double price, double hours) { }
+//    public double Equity(double price) => _cfg.Capital + _realized - _fees + Units * (price - _avg) * (Units == 0 ? 0 : 1);
 
-    public static double RoundDown(double x, int dec) { double m = Math.Pow(10, dec); return Math.Sign(x) * Math.Floor(Math.Abs(x) * m + 1e-9) / m; }
+//    public static double RoundDown(double x, int dec) { double m = Math.Pow(10, dec); return Math.Sign(x) * Math.Floor(Math.Abs(x) * m + 1e-9) / m; }
 
-    public async Task<Fill?> RebalanceAsync(double target, double price, DateTime time, CancellationToken ct)
-    {
-        if (Halted) return null;
-        bool spot = _cfg.Market == Market.Spot;
-        double maxLev = spot ? 1 : Math.Min(_cfg.Risk.MaxLeverage, _cfg.Cost.MaxLeverage);
-        double w = Math.Clamp(target, spot ? 0 : -maxLev, maxLev);
-        double curW = Units * price / _cfg.Capital;
-        if ((w == 0 && Units == 0) || (w != 0 && Math.Sign(w) == Math.Sign(curW) && Math.Abs(w - curW) < _band)) return null;
+//    public async Task<Fill?> RebalanceAsync(double target, double price, DateTime time, CancellationToken ct)
+//    {
+//        if (Halted) return null;
+//        bool spot = _cfg.Market == Market.Spot;
+//        double maxLev = spot ? 1 : Math.Min(_cfg.Risk.MaxLeverage, _cfg.Cost.MaxLeverage);
+//        double w = Math.Clamp(target, spot ? 0 : -maxLev, maxLev);
+//        double curW = Units * price / _cfg.Capital;
+//        if ((w == 0 && Units == 0) || (w != 0 && Math.Sign(w) == Math.Sign(curW) && Math.Abs(w - curW) < _band)) return null;
 
-        double targetUnits = RoundDown(w * _cfg.Capital / price, _cfg.QtyPrecision);
-        if (Math.Abs(targetUnits * price) > _cfg.Risk.MaxPositionNotional) { _log($"BLOCKED: target position {Math.Abs(targetUnits * price):F0} exceeds max position {_cfg.Risk.MaxPositionNotional:F0}"); return null; }
-        double delta = targetUnits - Units;
-        if (Math.Abs(delta) < Math.Pow(10, -_cfg.QtyPrecision)) return null;
+//        double targetUnits = RoundDown(w * _cfg.Capital / price, _cfg.QtyPrecision);
+//        if (Math.Abs(targetUnits * price) > _cfg.Risk.MaxPositionNotional) { _log($"BLOCKED: target position {Math.Abs(targetUnits * price):F0} exceeds max position {_cfg.Risk.MaxPositionNotional:F0}"); return null; }
+//        double delta = targetUnits - Units;
+//        if (Math.Abs(delta) < Math.Pow(10, -_cfg.QtyPrecision)) return null;
 
-        Fill? last = null;
-        if (spot) last = await SpotAsync(delta, price, time, ct);
-        else
-        {
-            if (Units != 0 && Math.Sign(targetUnits) != Math.Sign(Units))
-            {   // close first (reduce-only), then open the other side
-                last = await FuturesAsync(-Units, price, time, true, ct) ?? last;
-                if (Halted) return last;
-                delta = targetUnits - Units;
-            }
-            if (Math.Abs(delta) >= Math.Pow(10, -_cfg.QtyPrecision))
-                last = await FuturesAsync(delta, price, time, Units != 0 && Math.Sign(delta) != Math.Sign(Units), ct) ?? last;
-        }
-        return last;
-    }
+//        Fill? last = null;
+//        if (spot) last = await SpotAsync(delta, price, time, ct);
+//        else
+//        {
+//            if (Units != 0 && Math.Sign(targetUnits) != Math.Sign(Units))
+//            {   // close first (reduce-only), then open the other side
+//                last = await FuturesAsync(-Units, price, time, true, ct) ?? last;
+//                if (Halted) return last;
+//                delta = targetUnits - Units;
+//            }
+//            if (Math.Abs(delta) >= Math.Pow(10, -_cfg.QtyPrecision))
+//                last = await FuturesAsync(delta, price, time, Units != 0 && Math.Sign(delta) != Math.Sign(Units), ct) ?? last;
+//        }
+//        return last;
+//    }
 
-    private static bool Done(string s) => s.ToUpperInvariant() is "EXECUTED" or "CANCELLED" or "EXPIRED" or "DISCARDED" or "REJECTED" or "PARTIALLY_EXECUTED" or "FILLED";
+//    private static bool Done(string s) => s.ToUpperInvariant() is "EXECUTED" or "CANCELLED" or "EXPIRED" or "DISCARDED" or "REJECTED" or "PARTIALLY_EXECUTED" or "FILLED";
 
-    private async Task<Fill?> SpotAsync(double delta, double price, DateTime time, CancellationToken ct)
-    {
-        string side = delta > 0 ? "buy" : "sell";
-        double qty = RoundDown(Math.Abs(delta), _cfg.QtyPrecision);
-        if (side == "sell") qty = Math.Min(qty, RoundDown(Units, _cfg.QtyPrecision));
-        if (qty <= 0) return null;
-        double px = Math.Round(price * (side == "buy" ? 1.003 : 0.997), _cfg.PricePrecision);   // marketable limit (spot supports LIMIT only)
-        if (side == "buy" && qty * px > _cfg.Risk.MaxOrderNotional) { _log($"BLOCKED: buy order {qty * px:F0} exceeds max order size {_cfg.Risk.MaxOrderNotional:F0}"); return null; }
-        _log($"SPOT {side.ToUpper()} {qty} {_cfg.Symbol} @ limit {px}");
-        var o = await _cs.SpotPlaceLimitAsync(_cfg.Exchange, _cfg.Symbol, side, px, qty, Guid.NewGuid().ToString(), ct);
-        string id = CoinSwitchClient.Str(o, "order_id"); _orders++;
-        if (id == "") { Halt("Order response had no order_id: " + o.GetRawText()); return null; }
-        for (int i = 0; i < 15; i++)
-        {
-            await Task.Delay(3000, ct);
-            o = await _cs.SpotGetOrderAsync(id, ct);
-            if (Done(CoinSwitchClient.Str(o, "status"))) break;
-        }
-        if (!Done(CoinSwitchClient.Str(o, "status")))
-        {
-            try { await _cs.SpotCancelAsync(id, ct); } catch (Exception e) { _log("Cancel failed: " + e.Message); }
-            await Task.Delay(2000, ct);
-            o = await _cs.SpotGetOrderAsync(id, ct);
-        }
-        double ex = CoinSwitchClient.Num(o, "executed_qty"), avg = CoinSwitchClient.Num(o, "average_price");
-        _log($"Order {id}: status {CoinSwitchClient.Str(o, "status")}, filled {ex} @ {avg}");
-        if (ex <= 0) return null;
-        return Apply(side, ex, avg > 0 ? avg : px, ex * (avg > 0 ? avg : px) * _cfg.Cost.FeeRate, time);
-    }
+//    private async Task<Fill?> SpotAsync(double delta, double price, DateTime time, CancellationToken ct)
+//    {
+//        string side = delta > 0 ? "buy" : "sell";
+//        double qty = RoundDown(Math.Abs(delta), _cfg.QtyPrecision);
+//        if (side == "sell") qty = Math.Min(qty, RoundDown(Units, _cfg.QtyPrecision));
+//        if (qty <= 0) return null;
+//        double px = Math.Round(price * (side == "buy" ? 1.003 : 0.997), _cfg.PricePrecision);   // marketable limit (spot supports LIMIT only)
+//        if (side == "buy" && qty * px > _cfg.Risk.MaxOrderNotional) { _log($"BLOCKED: buy order {qty * px:F0} exceeds max order size {_cfg.Risk.MaxOrderNotional:F0}"); return null; }
+//        _log($"SPOT {side.ToUpper()} {qty} {_cfg.Symbol} @ limit {px}");
+//        var o = await _cs.SpotPlaceLimitAsync(_cfg.Exchange, _cfg.Symbol, side, px, qty, Guid.NewGuid().ToString(), ct);
+//        string id = CoinSwitchClient.Str(o, "order_id"); _orders++;
+//        if (id == "") { Halt("Order response had no order_id: " + o.GetRawText()); return null; }
+//        for (int i = 0; i < 15; i++)
+//        {
+//            await Task.Delay(3000, ct);
+//            o = await _cs.SpotGetOrderAsync(id, ct);
+//            if (Done(CoinSwitchClient.Str(o, "status"))) break;
+//        }
+//        if (!Done(CoinSwitchClient.Str(o, "status")))
+//        {
+//            try { await _cs.SpotCancelAsync(id, ct); } catch (Exception e) { _log("Cancel failed: " + e.Message); }
+//            await Task.Delay(2000, ct);
+//            o = await _cs.SpotGetOrderAsync(id, ct);
+//        }
+//        double ex = CoinSwitchClient.Num(o, "executed_qty"), avg = CoinSwitchClient.Num(o, "average_price");
+//        _log($"Order {id}: status {CoinSwitchClient.Str(o, "status")}, filled {ex} @ {avg}");
+//        if (ex <= 0) return null;
+//        return Apply(side, ex, avg > 0 ? avg : px, ex * (avg > 0 ? avg : px) * _cfg.Cost.FeeRate, time);
+//    }
 
-    private async Task<Fill?> FuturesAsync(double delta, double price, DateTime time, bool reduceOnly, CancellationToken ct)
-    {
-        string side = delta > 0 ? "BUY" : "SELL";
-        double qty = RoundDown(Math.Abs(delta), _cfg.QtyPrecision);
-        if (qty <= 0) return null;
-        if (!reduceOnly && qty * price > _cfg.Risk.MaxOrderNotional) { _log($"BLOCKED: order {qty * price:F0} exceeds max order size {_cfg.Risk.MaxOrderNotional:F0}"); return null; }
-        _log($"FUTURES {side} {qty} {_cfg.Symbol} MARKET reduceOnly={reduceOnly}");
-        var o = await _cs.FuturesPlaceAsync(_cfg.Symbol, side, "MARKET", qty, null, reduceOnly, Guid.NewGuid().ToString(), ct);
-        string id = CoinSwitchClient.Str(o, "order_id"); _orders++;
-        if (id == "") { Halt("Order response had no order_id: " + o.GetRawText()); return null; }
-        for (int i = 0; i < 10; i++)
-        {
-            await Task.Delay(2000, ct);
-            o = await _cs.FuturesGetOrderAsync(id, ct);
-            if (Done(CoinSwitchClient.Str(o, "status"))) break;
-        }
-        double ex = CoinSwitchClient.Num(o, "exec_quantity"), avg = CoinSwitchClient.Num(o, "avg_execution_price"), fee = CoinSwitchClient.Num(o, "execution_fee");
-        _log($"Order {id}: status {CoinSwitchClient.Str(o, "status")}, filled {ex} @ {avg}, fee {fee}");
-        if (ex <= 0) { Halt($"Market order {id} shows no fill. Check the CoinSwitch app before restarting."); return null; }
-        return Apply(side.ToLowerInvariant(), ex, avg > 0 ? avg : price, fee, time);
-    }
+//    private async Task<Fill?> FuturesAsync(double delta, double price, DateTime time, bool reduceOnly, CancellationToken ct)
+//    {
+//        string side = delta > 0 ? "BUY" : "SELL";
+//        double qty = RoundDown(Math.Abs(delta), _cfg.QtyPrecision);
+//        if (qty <= 0) return null;
+//        if (!reduceOnly && qty * price > _cfg.Risk.MaxOrderNotional) { _log($"BLOCKED: order {qty * price:F0} exceeds max order size {_cfg.Risk.MaxOrderNotional:F0}"); return null; }
+//        _log($"FUTURES {side} {qty} {_cfg.Symbol} MARKET reduceOnly={reduceOnly}");
+//        var o = await _cs.FuturesPlaceAsync(_cfg.Symbol, side, "MARKET", qty, null, reduceOnly, Guid.NewGuid().ToString(), ct);
+//        string id = CoinSwitchClient.Str(o, "order_id"); _orders++;
+//        if (id == "") { Halt("Order response had no order_id: " + o.GetRawText()); return null; }
+//        for (int i = 0; i < 10; i++)
+//        {
+//            await Task.Delay(2000, ct);
+//            o = await _cs.FuturesGetOrderAsync(id, ct);
+//            if (Done(CoinSwitchClient.Str(o, "status"))) break;
+//        }
+//        double ex = CoinSwitchClient.Num(o, "exec_quantity"), avg = CoinSwitchClient.Num(o, "avg_execution_price"), fee = CoinSwitchClient.Num(o, "execution_fee");
+//        _log($"Order {id}: status {CoinSwitchClient.Str(o, "status")}, filled {ex} @ {avg}, fee {fee}");
+//        if (ex <= 0) { Halt($"Market order {id} shows no fill. Check the CoinSwitch app before restarting."); return null; }
+//        return Apply(side.ToLowerInvariant(), ex, avg > 0 ? avg : price, fee, time);
+//    }
 
-    private Fill Apply(string side, double qty, double px, double fee, DateTime time)
-    {
-        double dq = side == "buy" ? qty : -qty;
-        if (Units == 0 || Math.Sign(dq) == Math.Sign(Units)) { _avg = (_avg * Math.Abs(Units) + px * qty) / (Math.Abs(Units) + qty); Units += dq; }
-        else
-        {
-            double closeQty = Math.Min(qty, Math.Abs(Units));
-            _realized += closeQty * (px - _avg) * Math.Sign(Units);
-            Units += dq;
-            if (Math.Abs(Units) < 1e-12) { Units = 0; _avg = 0; }
-            else if (Math.Sign(dq) == Math.Sign(Units)) _avg = px;   // flipped through zero
-        }
-        _fees += fee;
-        var f = new Fill(time, side, px, qty, fee, 0); _fills.Add(f);
-        return f;
-    }
+//    private Fill Apply(string side, double qty, double px, double fee, DateTime time)
+//    {
+//        double dq = side == "buy" ? qty : -qty;
+//        if (Units == 0 || Math.Sign(dq) == Math.Sign(Units)) { _avg = (_avg * Math.Abs(Units) + px * qty) / (Math.Abs(Units) + qty); Units += dq; }
+//        else
+//        {
+//            double closeQty = Math.Min(qty, Math.Abs(Units));
+//            _realized += closeQty * (px - _avg) * Math.Sign(Units);
+//            Units += dq;
+//            if (Math.Abs(Units) < 1e-12) { Units = 0; _avg = 0; }
+//            else if (Math.Sign(dq) == Math.Sign(Units)) _avg = px;   // flipped through zero
+//        }
+//        _fees += fee;
+//        var f = new Fill(time, side, px, qty, fee, 0); _fills.Add(f);
+//        return f;
+//    }
 
-    public object Snapshot(double price) => new { start = _cfg.Capital, equity = Equity(price), units = Units, avgEntry = _avg, realized = _realized,
-        fees = _fees, trades = _orders, halted = Halted, haltReason = HaltReason,
-        side = Units > 0 ? "long" : Units < 0 ? "short" : "flat", entryPrice = _avg, notional = Math.Abs(Units) * price,
-        unrealizedPnl = Units == 0 ? 0 : Units * (price - _avg), unrealizedPct = Units == 0 || _avg == 0 ? 0 : Math.Sign(Units) * (price / _avg - 1) * 100,
-        weight = _cfg.Capital > 0 ? Units * price / _cfg.Capital : 0 };
-}
+//    public object Snapshot(double price) => new { start = _cfg.Capital, equity = Equity(price), units = Units, avgEntry = _avg, realized = _realized,
+//        fees = _fees, trades = _orders, halted = Halted, haltReason = HaltReason,
+//        side = Units > 0 ? "long" : Units < 0 ? "short" : "flat", entryPrice = _avg, notional = Math.Abs(Units) * price,
+//        unrealizedPnl = Units == 0 ? 0 : Units * (price - _avg), unrealizedPct = Units == 0 || _avg == 0 ? 0 : Math.Sign(Units) * (price / _avg - 1) * 100,
+//        weight = _cfg.Capital > 0 ? Units * price / _cfg.Capital : 0 };
+//}
 
 public sealed class Trader
 {
@@ -275,7 +275,11 @@ public sealed class Trader
         if (restore != null) { _ex.Import(restore); Log($"Resumed from saved state: position {_ex.Units:0.######}"); }
     }
 
-    public void Log(string m) { lock (_log) { _log.Add($"{DateTime.UtcNow:HH:mm:ss} {m}"); if (_log.Count > 300) _log.RemoveAt(0); } }
+    public void Log(string m)
+    {
+        lock (_log) { _log.Add($"{DateTime.UtcNow:HH:mm:ss} {m}"); if (_log.Count > 300) _log.RemoveAt(0); }
+        Console.WriteLine($"[trader {Id}] {m}");
+    }
     public void Start() => _task = Task.Run(() => SuperviseAsync(_cts.Token));
 
     /// <summary>
@@ -438,8 +442,9 @@ public sealed class Trader
                 if (_ex.Halted) return;
             }
         }
-        catch (OperationCanceledException) { _state = "stopped"; }
-        catch (Exception e) { _state = "error"; Log("ERROR: " + e.Message); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { _state = "stopped"; }
+        catch (OrderException) { _state = "error"; Log("Trader STOPPED because an order could not be placed (reason above). Your tracked position is unchanged. Fix the cause, then Resume, or close it in the CoinSwitch app and press 'I already closed it'."); }
+        catch (Exception e) { _state = "error"; Log($"ERROR ({e.GetType().Name}): {e.Message}"); }
     }
 
     /// <summary>Daily-loss limit (live) and halt handling, using the live mark price.</summary>
