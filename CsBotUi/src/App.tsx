@@ -368,8 +368,18 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
                         {side === 'trade' && <TraderPanel data={data} strategy={strategyIn} costs={costs} liveEnabled={!!health?.liveEnabled} hasKeys={keysOk} quote={quote}
                             st={trader} session={session} onRefresh={refreshTrader} />}
 
-                        {/*{side === 'research' && <ResearchPanel data={data} strategy={strategyIn} costs={costs} defs={optDefs} current={params}*/}
-                        {/*    strategyName={pickName ?? 'strategy'} tfLabel={tfLabel} onApply={p => setParams(cur => ({ ...cur, ...p }))} />}*/}
+                        {side === 'research' && (
+                            <ResearchPanel
+                                data={data}
+                                strategy={strategyIn}
+                                costs={costs}
+                                defs={optDefs}
+                                current={params}
+                                strategyName={pickName ?? 'strategy'}
+                                tfLabel={tfLabel}
+                                onApply={p => setParams(cur => ({ ...cur, ...p }))}
+                            />
+                        )}
                     </div>
                     {side !== 'trade' &&
                         side !== 'wallet' &&
@@ -400,18 +410,18 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
                                 {err && <div className="err">{err}</div>}
                             </div>
                         )}
-                    {side === 'research' && (
-                        <ResearchPanel
-                            data={data}
-                            strategy={strategyIn}
-                            costs={costs}
-                            defs={optDefs}
-                            current={params}
-                            strategyName={def?.name ?? sid}
-                            tfLabel={tfLabel}
-                            onApply={setParams}
-                        />
-                    )}
+                    {/*{side === 'research' && (*/}
+                    {/*    <ResearchPanel*/}
+                    {/*        data={data}*/}
+                    {/*        strategy={strategyIn}*/}
+                    {/*        costs={costs}*/}
+                    {/*        defs={optDefs}*/}
+                    {/*        current={params}*/}
+                    {/*        strategyName={def?.name ?? sid}*/}
+                    {/*        tfLabel={tfLabel}*/}
+                    {/*        onApply={setParams}*/}
+                    {/*    />*/}
+                    {/*)}*/}
                 </aside>
             </div>
 
