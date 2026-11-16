@@ -42,7 +42,8 @@ public static class MonteCarlo
         var final = new double[runs]; var dd = new double[runs]; var cagr = new double[runs];
         var ruin = new bool[runs]; var samples = new double[keep][];
         double years = h / barsPerYear;
-
+        int points = 0;
+        for (int i = 0; i < h; i++) if (i % stride == 0 || i == h - 1) points++;   // length every sample path should have
         var opts = new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1) };
         Parallel.For(0, runs, opts, run =>
         {
@@ -65,7 +66,11 @@ public static class MonteCarlo
             dd[run] = maxDd * 100;
             cagr[run] = eq > 0 && years > 0 ? (Math.Pow(eq, 1 / years) - 1) * 100 : -100;
             ruin[run] = ruined;
-            if (pts != null) samples[run] = pts.ToArray();
+            if (pts != null)
+            {
+                while (pts.Count < points) pts.Add(0);   // a path that busted stops early: pad with 0 so every path has the same length
+                samples[run] = pts.ToArray();
+            }
         });
 
         var warnings = new List<string>();

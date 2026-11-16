@@ -370,6 +370,7 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
 
                         {side === 'research' && (
                             <ResearchPanel
+                                key={`${pick}|${data.market}|${data.exchange}|${data.symbol}|${data.intervalMin}|${data.days}|${JSON.stringify(costs)}`}
                                 data={data}
                                 strategy={strategyIn}
                                 costs={costs}

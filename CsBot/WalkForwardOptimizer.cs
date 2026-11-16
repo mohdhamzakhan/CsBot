@@ -24,7 +24,7 @@ public sealed record WfaResult(
 public static class WalkForwardOptimizer
 {
     public static int WindowCount(int candles, WfaRequest q)
-        => candles < q.InSampleBars + q.OutSampleBars ? 0 : (candles - q.InSampleBars - q.OutSampleBars) / q.StepBars + 1;
+     => q.StepBars < 1 || candles < q.InSampleBars + q.OutSampleBars ? 0 : (candles - q.InSampleBars - q.OutSampleBars) / q.StepBars + 1;
 
     /// <summary>Total backtests this run will execute; show it to the user before starting.</summary>
     public static long EstimateRuns(int candles, IReadOnlyList<Axis> axes, WfaRequest q)
@@ -36,6 +36,8 @@ public static class WalkForwardOptimizer
     {
         if (q.InSampleBars < 50 || q.OutSampleBars < 10 || q.StepBars < 1) throw new ArgumentException("Window sizes too small.");
         var objective = Objectives.ByName(q.Objective);
+        // slow settings (e.g. a 300-bar EMA) need more lead-in than the default; over-estimating is harmless
+        int warmup = Math.Max(q.Warmup, Math.Min(1500, (int)Math.Ceiling(axes.Max(a => a.Max)) + 50));
         int windows = WindowCount(candles.Count, q);
         if (windows < 2) throw new ArgumentException("Not enough data for at least 2 windows. Shorten the windows or fetch more history.");
 
@@ -52,7 +54,7 @@ public static class WalkForwardOptimizer
             int oosStart = isEnd, oosEnd = oosStart + q.OutSampleBars;
 
             // 1. optimise on in-sample data
-            var (isData, isSkip) = Cut(candles, isStart, isEnd, q.Warmup);
+            var (isData, isSkip) = Cut(candles, isStart, isEnd, warmup);
             var grid = GridRunner.Run(factory, axes, isData, cost, barsPerYear, objective, isSkip, maxCombos: q.MaxCombos, ct: ct);
             var an = Sensitivity.Analyze(grid, q.MinTrades, q.SmoothRadius);
 
@@ -69,7 +71,7 @@ public static class WalkForwardOptimizer
             var isM = grid.Cells[an.StableFlat];
 
             // 3. test the chosen parameters on unseen data
-            var (oosData, oosSkip) = Cut(candles, oosStart, oosEnd, q.Warmup);
+            var (oosData, oosSkip) = Cut(candles, oosStart, oosEnd, warmup);
             var built = factory(ps);
             var r = Backtester.Run(built.Strategy, oosData, cost, barsPerYear, minRebalance: built.Band);
             var gp = Metrics.GrowthPath(r, oosSkip);

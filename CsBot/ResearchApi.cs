@@ -105,6 +105,8 @@ public static class ResearchApi
         {
             try
             {
+                if (r.Wfa.StepBars < r.Wfa.OutSampleBars)
+                    throw new ArgumentException("'Move forward by' must be at least as long as the test window, otherwise the unseen periods overlap and get counted twice.");
                 var axes = ToAxes(r.Ranges);
                 var (candles, m, bpy, cost) = await Load(r.Data, r.Costs, 600, ct);
                 long est = WalkForwardOptimizer.EstimateRuns(candles.Count, axes, r.Wfa);

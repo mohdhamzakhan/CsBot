@@ -174,13 +174,14 @@ function WalkForwardView({ data, strategy, costs, defs, current, sel, setSel }: 
     const totalBars = barsOf(data.days)
     const windows = totalBars < isBars + oosBars ? 0 : Math.floor((totalBars - isBars - oosBars) / stepBars) + 1
     const runs = windows * (combos + 1)
-    const problem = defs.length === 0 ? 'This strategy has no numeric settings to optimise.'
-        : ranges.length === 0 ? 'Tick at least one setting to vary.' : ranges.length > 3 ? 'Vary at most 3 settings.'
-            : combos > 2000 ? `${combos} combinations per window is too many (limit 2000). Use bigger steps.`
-                : isBars < 50 || oosBars < 10 ? 'Windows are too short for this timeframe.'
-                    : windows < 2 ? 'The history is too short for at least 2 windows. Shorten the windows or raise "History" in Costs & data.'
-                        : runs > 30000 ? `About ${runs.toLocaleString()} backtests: too many (limit 30,000). Use bigger steps or longer out-of-sample windows.` : ''
-
+    const problem = [isDays, oosDays, stepDays].some(x => !Number.isFinite(x) || x < 1) ? 'Enter whole numbers of days (1 or more).'
+        : defs.length === 0 ? 'This strategy has no numeric settings to optimise.'
+            : ranges.length === 0 ? 'Tick at least one setting to vary.' : ranges.length > 3 ? 'Vary at most 3 settings.'
+                : combos > 2000 ? `${combos} combinations per window is too many (limit 2000). Use bigger steps.`
+                    : isBars < 50 || oosBars < 10 ? 'Windows are too short for this timeframe.'
+                        : stepBars < oosBars ? '"Move forward by" must be at least as long as "Then test on", otherwise the unseen periods overlap.'
+                            : windows < 2 ? 'The history is too short for at least 2 windows. Shorten the windows or raise "History" in Costs & data.'
+                                : runs > 30000 ? `About ${runs.toLocaleString()} backtests: too many (limit 30,000). Use bigger steps or longer out-of-sample windows.` : ''
     const run = () => {
         setUsed({ oosBars })
         return j.start(() => research.walkforward(data, strategy, costs, ranges, { inSampleBars: isBars, outSampleBars: oosBars, stepBars, anchored, warmup: 200, minTrades, smoothRadius: radius, objective, maxCombos: 2000 }))

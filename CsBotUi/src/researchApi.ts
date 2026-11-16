@@ -66,7 +66,10 @@ export function useJob<T>() {
   const jobId = useRef('')
 
   const stop = () => { if (timer.current !== undefined) { window.clearInterval(timer.current); timer.current = undefined } }
-  useEffect(() => () => stop(), [])
+    useEffect(() => () => {
+        stop()
+        if (jobId.current) research.cancel(jobId.current).catch(() => { })   // harmless if the job already finished
+    }, [])
 
   const start = useCallback(async (starter: () => Promise<{ id: string }>) => {
     stop(); setError(''); setJob(null); setBusy(true)
