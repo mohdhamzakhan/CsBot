@@ -86,7 +86,7 @@ export type TraderStatus = {
   fills?: { t: number; side: string; price: number; qty: number; fee: number }[]; log?: string[]
 }
 
-async function call<T>(path: string, body?: unknown, method?: string): Promise<T> {
+export async function call<T>(path: string, body?: unknown, method?: string): Promise<T> {
   const res = await fetch(path, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },

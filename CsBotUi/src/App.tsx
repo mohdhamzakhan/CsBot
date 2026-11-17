@@ -11,6 +11,7 @@ import KeysDialog from './KeysDialog'
 import LoginScreen from './LoginScreen'
 import MenuSheet from './MenuSheet'
 import BottomNav from './BottomNav'
+import AgentsPage from './AgentsPage'
 import type { NavKey } from './BottomNav'
 import PositionStrip from './PositionStrip'
 import WalletPanel from './WalletPanel'
@@ -43,7 +44,7 @@ function useViewport() {
     return { mobile, chartH: mobile ? Math.round(Math.min(Math.max(v.h * 0.42, 260), 380)) : 480, indH: mobile ? 130 : 170 }
 }
 
-function Workspace({ onLogout }: { onLogout?: () => void }) {
+function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: () => void }) {
     const vp = useViewport()
     const [saved0] = useState(readStore)                       // what was remembered from the last visit
     const last = useRef<Record<string, LastView>>(saved0.last ?? {})   // last symbol / timeframe used on each market
@@ -288,8 +289,8 @@ function Workspace({ onLogout }: { onLogout?: () => void }) {
     return (
         <div className="app" data-view={view}>
             <Header data={data} live={live} liveError={liveErr} quote={quote} needsAttention={!!health && !keysOk} onMenu={() => setMenuOpen(true)} />
-            {menuOpen && <MenuSheet health={health} onClose={() => setMenuOpen(false)} onKeys={() => setKeysOpen(true)} onLogout={onLogout} />}
-            {keysOpen && <KeysDialog onClose={() => setKeysOpen(false)} onSaved={() => { api.health().then(setHealth).catch(() => { }); setChartErr(''); loadChart(false) }} />}
+            {menuOpen && <MenuSheet health={health} onClose={() => setMenuOpen(false)} onKeys={() => setKeysOpen(true)} onLogout={onLogout} onAgents={onAgents} />}
+            {keysOpen && <KeysDialog onClose={() => setKeysOpen(false)}  onSaved={() => { api.health().then(setHealth).catch(() => { }); setChartErr(''); loadChart(false) }} />}
             <Toolbar data={data} onMarket={switchMarket} onSymbol={setSymbol} onInterval={changeTimeframe} />
             <Stats live={live} market={data.market} wallet={wallet} onWallet={() => nav('wallet')} />
 
@@ -438,7 +439,10 @@ export default function App() {
         check(); window.addEventListener('csbot-login-required', check)
         return () => window.removeEventListener('csbot-login-required', check)
     }, [check])
+    const [page, setPage] = useState<'bench' | 'agents'>(location.hash === '#agents' ? 'agents' : 'bench')
+    const go = (p: 'bench' | 'agents') => { setPage(p); history.replaceState(null, '', p === 'agents' ? '#agents' : location.pathname) }
     if (!auth) return null
     if (auth.required && !auth.authed) return <LoginScreen onDone={check} />
-    return <Workspace onLogout={auth.required ? async () => { await api.logout().catch(() => { }); check() } : undefined} />
+    if (page === 'agents') return <AgentsPage onBack={() => go('bench')} />
+    return <Workspace onLogout={auth.required ? async () => { await api.logout().catch(() => { }); check() } : undefined} onAgents={() => go('agents')} />
 }

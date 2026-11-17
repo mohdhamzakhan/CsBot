@@ -248,6 +248,17 @@ public sealed class Trader
     private TimeSpan Backoff(int n) => TimeSpan.FromSeconds(Math.Min(60, 5.0 * Math.Max(1, n)) * BackoffScale);
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public bool IsRunning => _task is { IsCompleted: false };
+    // read-only views used by the agents page
+    public string State => _state;
+    public double TargetWeight => _target;
+    public double LastPrice => Mark;
+    public string LastError => _lastError;
+    public long Signals { get; private set; }
+    public object Account() => _ex.Snapshot(Mark);
+    public double Equity() => Mark > 0 ? _ex.Equity(Mark) : double.NaN;
+    public ExecutorState ExportState() => _ex.Export();
+    public string LastLog() { lock (_log) return _log.Count > 0 ? _log[^1] : ""; }
+    public Fill[] FillsCopy() { for (int i = 0; i < 3; i++) { try { return _ex.Fills.ToArray(); } catch { } } return Array.Empty<Fill>(); }
     public TraderConfig Config => _cfg;
     /// <summary>Resources (API client) kept alive until the trader is replaced, so the kill switch can still flatten.</summary>
     public IDisposable? Owned { get; set; }
@@ -385,7 +396,7 @@ public sealed class Trader
             }
             if (hist.Count < _strat.WarmupBars) { _state = "error"; Log($"Only {hist.Count} bars available; need {_strat.WarmupBars}."); return; }
             Decision d = default;
-            foreach (var c in hist) { d = _strat.OnCandle(c); _lastBar = c.Time; _lastPrice = c.Close; }   // warm-up only: no orders
+            foreach (var c in hist) { d = _strat.OnCandle(c); Signals++; _lastBar = c.Time; _lastPrice = c.Close; }   // warm-up only: no orders  // warm-up only: no orders
             _target = d.TargetWeight; _mark = _lastPrice;
             _dayStart = _ex.Equity(_lastPrice); _dayStartDate = DateTime.UtcNow.Date;
             Log($"Warm-up done on {hist.Count} bars. Strategy target weight now {_target:F2}. Syncing position...");
@@ -424,6 +435,7 @@ public sealed class Trader
                 {
                     _ex.AccrueFunding(c.Close, _cfg.IntervalMin / 60.0);
                     var dec = _strat.OnCandle(c);
+                    Signals++;
                     if (dec.ExitPrice is double xp && _ex.Units != 0)
                     {   // a stop/target level was hit inside this candle: paper fills at the level; live exits at the current price (no resting stop orders)
                         await _execLock.WaitAsync(ct);
