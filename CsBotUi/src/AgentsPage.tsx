@@ -5,7 +5,7 @@ import type { LiveTick, Market, MarketRef, SavedScript, ScriptTemplate, Strategy
 import { agentsApi } from './agentsApi'
 import type { AgentRow, AgentsSnap } from './agentsApi'
 import AgentChart from './AgentChart'
-import Vortex from './Vortex'
+import RiskDesk from './RiskDesk'
 import ScannerPanel from './ScannerPanel'
 import { DAYS_FOR, TIMEFRAMES } from './TopBar'
 
@@ -57,23 +57,9 @@ function Face({ color }: { color: string }) {
     )
 }
 
-/** Agents that currently hold the same stance are joined by a line. */
-function LinkGraph({ agents }: { agents: AgentRow[] }) {
-    const n = agents.length
-    const pos = agents.map((_, i) => ({ x: n === 1 ? 100 : 16 + (i * 168) / (n - 1), y: i % 2 ? 62 : 24 }))
-    const edges: [number, number][] = []
-    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (agents[i].running && agents[j].running && stance(agents[i]) === stance(agents[j])) edges.push([i, j])
+function Panel({ n, title, tag, cls, id, children }: { n: string; title: string; tag?: string; cls?: string; id?: string; children: React.ReactNode }) {
     return (
-        <svg viewBox="0 0 200 86" preserveAspectRatio="xMidYMid meet" aria-label="Agents holding the same stance are linked">
-            {edges.map(([i, j], k) => <line key={k} x1={pos[i].x} y1={pos[i].y} x2={pos[j].x} y2={pos[j].y} stroke={agents[i].color} strokeOpacity=".45" strokeWidth="1.3" />)}
-            {pos.map((p, i) => <circle key={agents[i].id} cx={p.x} cy={p.y} r="5" fill={agents[i].color} opacity={agents[i].running ? 1 : 0.35} />)}
-        </svg>
-    )
-}
-
-function Panel({ n, title, tag, cls, children }: { n: string; title: string; tag?: string; cls?: string; children: React.ReactNode }) {
-    return (
-        <section className={`a-panel ${cls ?? ''}`}>
+        <section id={id} className={`a-panel ${cls ?? ''}`}>
             <div className="a-ph"><span className="n">{n}</span><span className="t">{title}</span>{tag && <span className="tag">{tag}</span>}</div>
             {children}
         </section>
@@ -174,6 +160,82 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
     )
 }
 
+
+// =====================================================================================
+// one agent in detail (opens when you tap its card)
+// =====================================================================================
+function maxDd(curve: number[][]) {
+    let peak = -Infinity, dd = 0
+    for (const p of curve) { peak = Math.max(peak, p[1]); if (peak > 0) dd = Math.max(dd, ((peak - p[1]) / peak) * 100) }
+    return dd
+}
+
+function AgentDetail({ a, q, fills, busy, onClose, onChart, onToggle, onCloseTrade, onLive, onRemove }: {
+    a: AgentRow; q: string | null; fills: AgentsSnap['fills']; busy: boolean; onClose: () => void; onChart: () => void
+    onToggle: () => void; onCloseTrade: () => void; onLive: () => void; onRemove: () => void
+}) {
+    const acct = a.account ?? {}
+    const side = String(acct.side ?? 'flat')
+    const params = Object.entries(a.strategy?.params ?? {})
+    const up = a.pnl >= 0
+    const status = a.running ? (a.state === 'error' || a.state === 'halted' ? a.state : a.error ? 'retrying' : 'running') : 'stopped'
+    return (
+        <div className="a-modal" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+            <div className="a-dialog" style={{ ['--c' as any]: a.color }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 46, flex: 'none' }}><Face color={a.color} /></div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ font: '500 20px var(--mono)', letterSpacing: '.08em', color: a.color }}>{a.name}</div>
+                        <div className="a-note" style={{ margin: 0 }}>{a.role} &middot; {a.data.symbol} &middot; {tfName(a.data.intervalMin)} &middot; {status}</div>
+                    </div>
+                    <button className="a-btn tiny" onClick={onClose}>Close</button>
+                </div>
+
+                <div className="a-minis">
+                    <div className="a-mini"><span>Equity</span><b><Money v={a.equity} q={q} /></b></div>
+                    <div className="a-mini"><span>P&amp;L</span><b className={up ? 'a-pos' : 'a-neg'}><Money v={a.pnl} q={q} sign /></b></div>
+                    <div className="a-mini"><span>Win rate</span><b>{a.winRate != null ? Math.round(a.winRate) + '%' : '\u2014'}</b><small>{a.closed} closed trades</small></div>
+                    <div className="a-mini"><span>Max drawdown</span><b className="a-neg">{maxDd(a.curve).toFixed(1)}%</b><small>since it started</small></div>
+                    <div className="a-mini"><span>Candles evaluated</span><b>{a.signals.toLocaleString('en-US')}</b></div>
+                    <div className="a-mini"><span>Wants now</span><b>{a.target.toFixed(2)}</b><small>of capital</small></div>
+                </div>
+
+                <label>Position</label>
+                {side === 'flat'
+                    ? <div className="a-note" style={{ margin: 0 }}>No open position.</div>
+                    : <div className="a-mono" style={{ fontSize: 13 }}><b className={side === 'long' ? 'a-pos' : 'a-neg'}>{side.toUpperCase()}</b> {Number(acct.units).toFixed(6)} @ {fmt(Number(acct.entryPrice), 2)} &middot;
+                        <span className={Number(acct.unrealizedPnl) >= 0 ? 'a-pos' : 'a-neg'}> {sgn(Number(acct.unrealizedPnl))}{fmt(Math.abs(Number(acct.unrealizedPnl)), 2)} ({sgn(Number(acct.unrealizedPct))}{Math.abs(Number(acct.unrealizedPct)).toFixed(2)}%)</span></div>}
+
+                <label>Equity curve</label>
+                <Spark pts={a.curve} color={a.color} fill height={90} />
+
+                <label>Strategy settings</label>
+                <div className="a-note" style={{ margin: 0 }}>{params.length ? params.map(([k, v]) => `${k} ${v}`).join(' \u00B7 ') : 'default settings'} &middot; capital {fmt(a.capital, 0)} {q === 'INR' ? 'INR' : 'USDT'}</div>
+
+                <label>Latest trades</label>
+                {fills.length === 0 ? <div className="a-note" style={{ margin: 0 }}>No trades yet. An agent acts when a candle closes.</div> : (
+                    <div className="a-stream" style={{ maxHeight: 150 }}>
+                        {fills.slice(0, 8).map((f, i) => (
+                            <div className="a-srow" key={i} style={{ gridTemplateColumns: '62px 1fr 78px' }}>
+                                <span className="tm">{new Date(f.t * 1000).toLocaleTimeString('en-GB')}</span>
+                                <span><b className={f.side === 'buy' ? 'a-pos' : 'a-neg'}>{f.side.toUpperCase()}</b> <small>{f.qty.toFixed(5)}</small></span>
+                                <span className="px">{fmt(f.price, f.price >= 1000 ? 2 : 4)}</span>
+                            </div>))}
+                    </div>)}
+                {(a.error || a.state === 'error' || a.state === 'halted') && <div className="a-err" style={{ marginTop: 10 }}>{a.error || a.note}</div>}
+
+                <div className="a-ctl" style={{ justifyContent: 'flex-start', marginTop: 14 }}>
+                    <button className="a-btn main tiny" onClick={onChart}>Show on chart</button>
+                    <button className="a-btn tiny" disabled={busy} onClick={onToggle}>{a.running ? 'Stop' : 'Resume'}</button>
+                    {side !== 'flat' && <button className="a-btn tiny" disabled={busy} onClick={onCloseTrade}>Close position</button>}
+                    <button className="a-btn tiny" disabled={busy} title="Copy this strategy to the Paper / Live tab (starts nothing)" onClick={onLive}>Go live (alone)</button>
+                    <button className="a-btn tiny danger" disabled={busy} onClick={onRemove}>Remove</button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 // =====================================================================================
 // the page
 // =====================================================================================
@@ -181,6 +243,8 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
     const [snap, setSnap] = useState<AgentsSnap | null>(null)
     const [err, setErr] = useState('')
     const [focus, setFocus] = useState('')
+    const [openId, setOpenId] = useState('')
+    const [markAll, setMarkAll] = useState(false)
     const [dlg, setDlg] = useState(false)
     const [lv, setLv] = useState<LiveTick | null>(null)
     const [busy, setBusy] = useState(false)
@@ -210,12 +274,40 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
     const q = snap?.quote ?? null
     const c = snap?.combined
     const fa = agents.find(a => a.id === focus) ?? agents[0]
-    const marks = useMemo(() => (fa && snap ? snap.fills.filter(f => f.symbol === fa.data.symbol).map(f => ({ t: f.t, side: f.side, name: f.name, color: f.color })) : []), [snap, fa])
+    const marks = useMemo(() => (fa && snap ? snap.fills.filter(f => f.symbol === fa.data.symbol && (markAll || f.agent === fa.id)).map(f => ({ t: f.t, side: f.side, name: f.name, color: f.color })) : []), [snap, fa, markAll])
+    const openAgent = agents.find(a => a.id === openId)
+
+    /** Real money is ONE portfolio trader (the six strategies averaged into a single netted position), never six traders fighting over one exchange position. This copies the agents into the workbench's Portfolio strategy; you still backtest, set limits and confirm. */
+    const asPortfolio = async () => {
+        const [tpl, sv] = await Promise.all([api.scriptTemplates().catch(() => [] as ScriptTemplate[]), api.scriptSaved().catch(() => [] as SavedScript[])])
+        const groups = new Map<string, AgentRow[]>()
+        agents.forEach(a => { const k = `${a.data.market}|${a.data.symbol}|${a.data.intervalMin}`; groups.set(k, [...(groups.get(k) ?? []), a]) })
+        const best = [...groups.values()].sort((x, y) => y.length - x.length)[0]
+        if (!best) return
+        const picks: string[] = [], memberParams: Record<string, Record<string, number>> = {}, skipped: string[] = []
+        for (const a of best) {
+            const st = a.strategy
+            const pick = st.id === 'script' ? (() => { const t = tpl.find(x => x.code === st.code), v = sv.find(x => x.code === st.code); return t ? 't:' + t.id : v ? 's:' + v.name : '' })() : st.id === 'portfolio' ? '' : 'b:' + st.id
+            if (!pick) { skipped.push(`${a.name} (unsaved custom script: save it as a script first)`); continue }
+            if (picks.includes(pick)) { skipped.push(`${a.name} (same strategy as another agent)`); continue }
+            picks.push(pick); memberParams[pick] = (st.params ?? {}) as Record<string, number>
+        }
+        if (picks.length === 0) { setErr('None of these agents can be combined into a portfolio.'); return }
+        const d = best[0].data
+        const others = agents.length - best.length
+        const text = `Create a portfolio of ${picks.length} strateg${picks.length === 1 ? 'y' : 'ies'} on ${d.symbol} (${tfName(d.intervalMin)} candles) in the workbench?\n\n` +
+            (others > 0 ? `${others} agent(s) on a different market or timeframe are left out (a portfolio runs on one).\n` : '') + (skipped.length ? `Skipped: ${skipped.join('; ')}.\n` : '') +
+            `\nNothing starts. You will run the backtest, then set your limits and type the confirmation in the Paper / Live tab.`
+        if (!window.confirm(text)) return
+        let old: Record<string, unknown> = {}
+        try { old = JSON.parse(localStorage.getItem('csbot.state.v1') || '{}') || {} } catch { /* start fresh */ }
+        localStorage.setItem('csbot.state.v1', JSON.stringify({ ...old, data: { ...d, days: DAYS_FOR[d.intervalMin] ?? 365 }, sid: 'portfolio', pick: 'portfolio', members: picks, memberParams, params: {} }))
+        sessionStorage.setItem('csbot.tab', 'strategy')
+        onBack()
+    }
     const symbols = useMemo(() => { const m = new Map<string, number>(); agents.forEach(a => { if (a.price > 0) m.set(a.data.symbol, a.price) }); return [...m] }, [agents])
 
     const running = agents.filter(a => a.running)
-    const sides = running.map(stance)
-    const coherence = sides.length ? Math.max(...['long', 'short', 'flat'].map(s => sides.filter(x => x === s).length)) / sides.length * 100 : 0
     const conv = c?.conviction ?? 0
     const pnlUp = (c?.pnl ?? 0) >= 0
     const utc = new Date(now).toISOString().slice(11, 19)
@@ -266,27 +358,18 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                         </section>
 
                         <div className="a-grid">
-                            <Panel n="01" title="The vortex" tag="agent conviction" cls="s3">
-                                <div className="a-vortex">
-                                    <Vortex intensity={0.7 + conv * 1.5} />
-                                    <div className="a-readout" style={{ left: 12, bottom: 12 }}>Angular velocity<b>{(0.9 + conv * 2.2).toFixed(2)} rad/s</b></div>
-                                    <div className="a-readout" style={{ right: 12, bottom: 12 }}>Agents in flow<b>{c.active} / {c.total}</b></div>
-                                </div>
-                                <div className="a-link"><LinkGraph agents={agents} /></div>
-                                <div className="a-stats4">
-                                    <span>Coherence<b>{coherence.toFixed(0)}%</b></span><span>Conviction<b>{(conv * 100).toFixed(0)}%</b></span>
-                                    <span>Running<b>{c.active}</b></span><span>Fills<b>{c.fillsTotal}</b></span>
-                                </div>
-                                <div className="a-note" style={{ padding: '0 14px 10px', marginTop: 0 }}>Decorative: it spins faster the larger the positions the running agents want. Linked dots hold the same stance.</div>
+                            <Panel n="01" title="Risk desk" tag="tap to explore" cls="s3">
+                                <RiskDesk agents={agents} q={q} onOpen={id => { setFocus(id); setOpenId(id) }} />
                             </Panel>
 
-                            <Panel n="02" title={fa ? fa.data.symbol : 'Chart'} tag="live tape" cls="s3">
+                            <Panel n="02" title={fa ? fa.data.symbol : 'Chart'} tag="live tape" cls="s3" id="a-chart">
                                 {fa ? (<>
                                     <div className="a-chart-head">
                                         <span className={`px ${chg != null ? (chg >= 0 ? 'up' : 'dn') : ''}`}>{shownPx ? fmt(shownPx, shownPx >= 1000 ? 2 : 4) : '...'}</span>
                                         {chg != null && <small className={chg >= 0 ? 'a-pos' : 'a-neg'}>{sgn(chg)}{Math.abs(chg).toFixed(2)}% 24h</small>}
                                         {lv?.high != null && lv?.low != null && <small>H {fmt(lv.high, 2)} &middot; L {fmt(lv.low, 2)}</small>}
-                                        <small>{tfName(fa.data.intervalMin)} &middot; {fa.name}{agents.length > 1 ? ' (tap an agent below to switch)' : ''}</small>
+                                        <small>{tfName(fa.data.intervalMin)} &middot; {fa.name}{agents.length > 1 ? ' (tap an agent below)' : ''}</small>
+                                        {agents.length > 1 && <button className="a-btn tiny" onClick={() => setMarkAll(v => !v)}>{markAll ? 'Trades: all agents' : `Trades: ${fa.name} only`}</button>}
                                     </div>
                                     <AgentChart data={fa.data} marks={marks} height={narrow ? 230 : 330} onLive={setLv} />
                                 </>) : <div className="a-empty">No agent selected.</div>}
@@ -328,8 +411,8 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                             {agents.map((a, i) => {
                                 const side = stance(a), up = a.pnl >= 0, bad = a.state === 'error' || a.state === 'halted'
                                 return (
-                                    <article key={a.id} className={`a-agent ${fa?.id === a.id ? 'on' : ''} ${a.running ? '' : 'off'}`} style={{ ['--c' as any]: a.color }} onClick={() => setFocus(a.id)}>
-                                        <div className="a-agent-top"><span>AG {String(i + 1).padStart(2, '0')}</span><span>{tfName(a.data.intervalMin)} &middot; {a.data.symbol}</span></div>
+                                    <article key={a.id} className={`a-agent ${fa?.id === a.id ? 'on' : ''} ${a.running ? '' : 'off'}`} style={{ ['--c' as any]: a.color }} onClick={() => { setFocus(a.id); setOpenId(a.id) }}>
+                                        <div className="a-agent-top"><span>AG {String(i + 1).padStart(2, '0')}{fa?.id === a.id ? ' \u25CF' : ''}</span><span>{tfName(a.data.intervalMin)} &middot; {a.data.symbol}</span></div>
                                         <Face color={a.color} />
                                         <h4>{a.name}</h4>
                                         <div className="a-role" title={a.role}>{a.role}</div>
@@ -347,6 +430,16 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                                     </article>)
                             })}
                         </div>
+                        <section className="a-live">
+                            <div style={{ flex: 1, minWidth: 220 }}>
+                                <b>Use these on real capital</b>
+                                <div className="a-note" style={{ margin: '4px 0 0' }}>
+                                    Real money runs as <b>one portfolio trader</b>, not six separate ones: six traders on one coin would fight over a single exchange position. The portfolio averages the strategies into one position
+                                    (opposites cancel) with risk limits: equal shares, a cap on size, benching of a losing strategy, and a drawdown breaker. The agents on this page stay paper-only.
+                                </div>
+                            </div>
+                            <button className="a-btn main" disabled={agents.length < 1} onClick={asPortfolio}>Set up as a portfolio</button>
+                        </section>
                         <div className="a-note" style={{ marginTop: 14 }}>
                             All agents run on paper money with real CoinSwitch prices, so results ignore queue position and real-world fill problems. Agents keep running on the server when this page is closed and are restored after a restart.
                         </div>
@@ -354,6 +447,14 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                 </>}
             </div>
 
+            {openAgent && (
+                <AgentDetail a={openAgent} q={q} busy={busy} fills={(snap?.fills ?? []).filter(f => f.agent === openAgent.id)}
+                    onClose={() => setOpenId('')}
+                    onChart={() => { setFocus(openAgent.id); setOpenId(''); setTimeout(() => document.getElementById('a-chart')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50) }}
+                    onToggle={() => act(() => (openAgent.running ? agentsApi.stop(openAgent.id) : agentsApi.resume(openAgent.id)))}
+                    onCloseTrade={() => { if (window.confirm(`Close ${openAgent.name}'s simulated position now?`)) act(() => agentsApi.close(openAgent.id)) }}
+                    onLive={() => { if (window.confirm(`Open ${openAgent.name}'s strategy in the Paper / Live tab? Nothing starts: you still run the backtest gate and type the confirmation phrase.`)) goLive(openAgent) }}
+                    onRemove={() => { if (window.confirm(`Remove ${openAgent.name} and its simulated account?`)) { setOpenId(''); act(() => agentsApi.remove(openAgent.id)) } }} />)}
             {dlg && <AddDialog quote={q} onClose={() => setDlg(false)} onDone={() => { setDlg(false); load() }} />}
         </div>
     )
