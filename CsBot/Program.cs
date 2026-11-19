@@ -17,6 +17,7 @@ if (!loopbackOnly && !Auth.Required)
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<TraderManager>();
 builder.Services.AddSingleton<AgentManager>();
+builder.Services.AddSingleton<ScannerManager>();
 builder.Services.Configure<ForwardedHeadersOptions>(o => o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto);   // trusts a reverse proxy on this same machine only
 var app = builder.Build();
 app.UseForwardedHeaders();
@@ -48,5 +49,7 @@ app.MapApi();
 app.MapResearch();
 app.MapAgents();
 app.Services.GetRequiredService<AgentManager>().Start();   // restores saved agents, records equity curves
+app.MapScanner();
+app.Services.GetRequiredService<ScannerManager>().Start();   // resumes a scan that was running before a restart
 app.MapFallbackToFile("index.html");
 app.Run(url);

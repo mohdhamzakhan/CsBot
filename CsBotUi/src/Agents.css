@@ -862,3 +862,132 @@
     margin-left: 5px;
     letter-spacing: .04em;
 }
+
+/* ---------- header tabs, scanner ---------- */
+.a-nav {
+    display: inline-flex;
+    border: 1px solid var(--line2);
+    background: #fff;
+}
+
+    .a-nav button {
+        border: 0;
+        background: #fff;
+        padding: 8px 14px;
+        font: 700 11px var(--mono);
+        letter-spacing: .08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        min-height: 38px;
+    }
+
+        .a-nav button.on {
+            background: var(--blue);
+            color: #fff;
+        }
+
+.a-ok {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid #1b9a7f66;
+    background: #1b9a7f12;
+    border-radius: 8px;
+    color: #137460;
+    font-size: 12.5px;
+}
+
+.a-warn {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border: 1px solid #c98e0066;
+    background: #c98e0012;
+    color: #7a5600;
+    font-size: 12.5px;
+}
+
+.a-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.a-chip {
+    border: 1px solid var(--line2);
+    background: #fff;
+    color: var(--muted);
+    padding: 6px 10px;
+    font: 600 11px var(--mono);
+    letter-spacing: .03em;
+    min-height: 32px;
+}
+
+    .a-chip.on {
+        background: #2d6bff12;
+        border-color: var(--blue);
+        color: var(--blue);
+    }
+
+.a-scroll {
+    overflow-x: auto;
+}
+
+.a-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 560px;
+    font: 12px var(--mono);
+}
+
+    .a-table th {
+        text-align: right;
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--line);
+        font: 600 9.5px var(--mono);
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        white-space: nowrap;
+    }
+
+    .a-table td {
+        text-align: right;
+        padding: 8px;
+        border-bottom: 1px dashed var(--line);
+        vertical-align: top;
+        font-variant-numeric: tabular-nums;
+    }
+
+        .a-table th:first-child, .a-table td:first-child {
+            text-align: left;
+        }
+
+        .a-table td small {
+            display: block;
+            color: var(--muted);
+            font-size: 10px;
+            max-width: 260px;
+            white-space: normal;
+        }
+
+.a-sig {
+    display: grid;
+    grid-template-columns: 74px 1fr;
+    gap: 8px;
+    padding: 7px 2px;
+    border-bottom: 1px dashed var(--line);
+    font: 11.5px var(--mono);
+}
+
+    .a-sig .tm {
+        color: var(--dim);
+    }
+
+    .a-sig small {
+        color: var(--muted);
+    }
+
+@media (max-width: 700px) {
+    .a-nav button {
+        padding: 8px 10px;
+    }
+}

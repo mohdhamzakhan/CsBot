@@ -13,6 +13,8 @@ public sealed class SimPortfolio
 
     public double Cash, Units, Fees, TdsWithheld, Funding, Traded, SlipCost, Entry;
     public int Trades;
+    /// <summary>Smallest order the exchange accepts, in coin units (0 = no minimum). Set by the paper trader so paper behaves like live.</summary>
+    public double MinQty;
 
     public SimPortfolio(CostConfig cost, double startCash, double minRebalance = 0.15)
     {
@@ -41,6 +43,12 @@ public sealed class SimPortfolio
         double slip = _c.SlippagePct / 100;
         double targetUnits = w * eq0 / refPrice;
         double delta = targetUnits - Units;
+        if (MinQty > 0 && targetUnits != 0)
+        {
+            // exchange minimum: a position smaller than the minimum cannot be opened; a resize smaller than the minimum cannot be sent
+            if (Math.Abs(targetUnits) < MinQty) { if (Units == 0) return null; targetUnits = 0; delta = -Units; }
+            else if (Math.Abs(delta) < MinQty) return null;
+        }
         double fill = refPrice * (1 + Math.Sign(delta) * slip);
         double notional = Math.Abs(delta) * fill;
         double fee = notional * _c.FeeRate;

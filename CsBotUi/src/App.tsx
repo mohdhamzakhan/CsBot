@@ -5,7 +5,10 @@ import ChartPanel from './ChartPanel'
 import Results from './Results'
 import RuleBuilder, { defaultRules } from './RuleBuilder'
 import TraderPanel from './TraderPanel'
+import PositionCheck from './PositionCheck'
+import AgentsSummary from './AgentsSummary'
 import ScriptEditor from './ScriptEditor'
+import PortfolioBuilder from './PortfolioBuilder'
 import { Header, Toolbar, Stats, TIMEFRAMES, DAYS_FOR } from './TopBar'
 import KeysDialog from './KeysDialog'
 import LoginScreen from './LoginScreen'
@@ -49,8 +52,9 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     const [saved0] = useState(readStore)                       // what was remembered from the last visit
     const last = useRef<Record<string, LastView>>(saved0.last ?? {})   // last symbol / timeframe used on each market
     const restoredParams = useRef(!!saved0.params && !!saved0.sid)
-    const [side, setSide] = useState<'strategy' | 'costs' | 'trade' | 'wallet' | 'options' | 'research'>('strategy')
-    const [view, setView] = useState<'chart' | 'panel'>('chart')   // phone only: which full screen is showing
+    const [side, setSide] = useState<'strategy' | 'costs' | 'trade' | 'wallet' | 'options' | 'research'>(() => (sessionStorage.getItem('csbot.tab') as any) ?? 'strategy')
+    const [view, setView] = useState<'chart' | 'panel'>(() => (sessionStorage.getItem('csbot.tab') ? 'panel' : 'chart'))
+    useEffect(() => { sessionStorage.removeItem('csbot.tab') }, [])
     const [menuOpen, setMenuOpen] = useState(false)
     const [health, setHealth] = useState<{ hasKeys: boolean; keyMatchesSecret: boolean; liveEnabled: boolean } | null>(null)
     const [strategies, setStrategies] = useState<StrategyDef[]>([])
@@ -61,6 +65,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     const [templates, setTemplates] = useState<ScriptTemplate[]>([])
     const [saved, setSaved] = useState<SavedScript[]>([])
     const [code, setCode] = useState<string>(saved0.code ?? '')
+    const [members, setMembers] = useState<string[]>(saved0.members ?? ['t:ema_trend', 't:macd_trend', 't:supertrend', 't:donchian', 't:rsi_pullback', 't:bollinger_revert'])
     const [params, setParams] = useState<Record<string, number>>(saved0.params ?? {})
     const [rules, setRules] = useState<RuleSet>(defaultRules())
     const [costs, setCosts] = useState<Costs>(saved0.costs ?? { fee: 0.4, gst: 18, slippage: 0.05, tds: 1, funding: 0, leverage: 1 })
@@ -103,7 +108,14 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     }, [])
 
     const def = useMemo(() => strategies.find(s => s.id === sid), [strategies, sid])
-    const builtins = useMemo(() => strategies.filter(s => s.id !== 'script' && s.id !== 'rules'), [strategies])
+    const builtins = useMemo(
+        () => strategies.filter(
+            s => s.id !== 'script' &&
+                s.id !== 'rules' &&
+                s.id !== 'portfolio'
+        ),
+        [strategies]
+    )
     const readyMade = useMemo(() => templates.filter(t => t.id !== 'blank'), [templates])
 
     // settings that can be searched: the built-in strategy's parameters, or the input() settings of the open script
@@ -127,6 +139,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
         setPick(v)
         if (v.startsWith('b:')) { setSid(v.slice(2)); return }
         if (v === 'rules') { setSid('rules'); return }
+        if (v === 'portfolio') { setSid('portfolio'); return }
         setSid('script'); setParams({})                          // new script = fresh settings (do not inherit another script's inputs)
         if (v.startsWith('t:')) setCode(templates.find(t => t.id === v.slice(2))?.code ?? '')
         else if (v.startsWith('s:')) setCode(saved.find(s => s.name === v.slice(2))?.code ?? '')
@@ -144,13 +157,24 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     }, [def])
     useEffect(() => {
         last.current[data.market] = { exchange: data.exchange, symbol: data.symbol, intervalMin: data.intervalMin, days: data.days }
-        try { localStorage.setItem(STORE, JSON.stringify({ data, sid, pick, code, params, costs, startCash, last: last.current })) } catch { /* storage unavailable */ }
-    }, [data, sid, pick, code, params, costs, startCash])
+        try { localStorage.setItem(STORE, JSON.stringify({ data, sid, pick, code, params, costs, startCash, last: last.current, members })) } catch { /* storage unavailable */ }
+    }, [data, sid, pick, code, params, costs, startCash, members])
 
     const futures = data.market === 'futures'
     const quote = futures ? 'USDT' : data.symbol.split('/')[1] ?? 'INR'
     const tfLabel = TIMEFRAMES.find(t => t[0] === data.intervalMin)?.[1] ?? `${data.intervalMin}m`
-    const strategyIn = useMemo(() => ({ id: sid, params, rules: sid === 'rules' ? rules : undefined, code: sid === 'script' ? code : undefined }), [sid, params, rules, code])
+    const strategyIn = useMemo(() => ({
+        id: sid,
+        params,
+        rules: sid === 'rules' ? rules : undefined,
+        code: sid === 'script'
+            ? code
+            : sid === 'portfolio'
+                ? JSON.stringify({
+                    members: members.map(pick => ({ pick }))
+                })
+                : undefined
+    }), [sid, params, rules, code, members])
 
     // ---- candles load automatically whenever market / symbol / timeframe / history changes ----
     const dataKey = `${data.market}|${data.exchange}|${data.symbol}|${data.intervalMin}|${data.days}`
@@ -169,7 +193,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
 
     // ---- where the strategy acts: the running strategy if there is one on this chart, otherwise the selected one ----
     const pickName = pick.startsWith('b:') ? builtins.find(s => s.id === pick.slice(2))?.name : pick.startsWith('t:') ? templates.find(t => t.id === pick.slice(2))?.name
-        : pick.startsWith('s:') ? pick.slice(2) : pick === 'rules' ? 'Point-and-click rules' : 'Custom script'
+        : pick.startsWith('s:') ? pick.slice(2) : pick === 'portfolio' ? 'Portfolio of ' + members.length : pick === 'rules' ? 'Point-and-click rules' : 'Custom script'
     const tfName = (m: number) => (m >= 1440 ? `${m / 1440}D` : m >= 60 ? `${m / 60}h` : `${m}m`)
     // Follow the trader that is actually running (or still holding a position) on ITS OWN timeframe - even if the chart shows a different one.
     const trigSrc = useMemo(() => {
@@ -208,7 +232,15 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
         if (trig.levels?.target != null) out.push({ price: trig.levels.target, color: '#26a69a', title: 'target order' })
         return out
     }, [trig, trigSrc.symbol, trigSrc.market, data.symbol, data.market])
-
+    const positionLines = useMemo(() => {
+        const a = trader?.account as Record<string, any> | undefined
+        const out: { price: number; color: string; title: string }[] = []
+        if (trader && a && String(a.side) !== 'flat' && trader.symbol === data.symbol && trader.market === data.market && Number(a.entryPrice) > 0)
+            out.push({ price: Number(a.entryPrice), color: '#f5b83d', title: `${trader.mode} entry (${a.side})` })
+        if (wallet?.market === 'futures')
+            wallet.positions.forEach(p => { if (p.liquidation > 0 && p.symbol.toUpperCase() === data.symbol.toUpperCase()) out.push({ price: p.liquidation, color: '#ef5350', title: 'liquidation' }) })
+        return out
+    }, [trader, wallet, data.symbol, data.market])
     // ---- live price: poll every 3 seconds (paused while the tab is hidden) ----
     useEffect(() => {
         let alive = true, fails = 0
@@ -290,16 +322,18 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
         <div className="app" data-view={view}>
             <Header data={data} live={live} liveError={liveErr} quote={quote} needsAttention={!!health && !keysOk} onMenu={() => setMenuOpen(true)} />
             {menuOpen && <MenuSheet health={health} onClose={() => setMenuOpen(false)} onKeys={() => setKeysOpen(true)} onLogout={onLogout} onAgents={onAgents} />}
-            {keysOpen && <KeysDialog onClose={() => setKeysOpen(false)}  onSaved={() => { api.health().then(setHealth).catch(() => { }); setChartErr(''); loadChart(false) }} />}
+            {keysOpen && <KeysDialog onClose={() => setKeysOpen(false)} onSaved={() => { api.health().then(setHealth).catch(() => { }); setChartErr(''); loadChart(false) }} />}
             <Toolbar data={data} onMarket={switchMarket} onSymbol={setSymbol} onInterval={changeTimeframe} />
             <Stats live={live} market={data.market} wallet={wallet} onWallet={() => nav('wallet')} />
 
             <div className="workspace" data-view={view} data-opt={side === 'options' || side === 'research' ? '1' : '0'}>
                 <main>
-                    <ChartPanel candles={chartCandles} overlays={bt?.overlays ?? []} fills={bt?.fills ?? []} splitTime={opt?.trainEnd ?? null} levels={triggerLines} intervalSec={data.intervalMin * 60} live={live} liveError={liveErr}
+                    <ChartPanel candles={chartCandles} overlays={bt?.overlays ?? []} fills={bt?.fills ?? []} splitTime={opt?.trainEnd ?? null} levels={[...triggerLines, ...positionLines]} intervalSec={data.intervalMin * 60} live={live} liveError={liveErr}
                         loading={chartLoading} error={chartErr} title={data.symbol} subtitle={`${tfLabel} · ${futures ? 'USDT perpetual' : 'spot'}`}
                         viewKey={dataKey} onNewBar={() => loadChart(true)} onReload={() => loadChart(false)} height={vp.chartH} indHeight={vp.indH} />
                     <PositionStrip trader={trader} session={session} quote={quote} onManage={() => nav('trade')} />
+                    <PositionCheck trader={trader} wallet={wallet} chartSymbol={data.symbol} />
+                    <AgentsSummary onOpen={onAgents} />
                     <TriggerCard res={trig} error={trigErr} busy={trigBusy} live={trigSrc.symbol === data.symbol && trigSrc.market === data.market ? live?.price ?? null : null} quote={trigSrc.quote} tfLabel={trigSrc.tf} source={trigSrc.source} name={trigSrc.name} holding={trigSrc.holding} onRefresh={loadTriggers} />
                     {opt && <div ref={optRef} style={{ scrollMarginTop: 70 }}><OptimizeResults res={opt} onShow={p => run(false, p, 'chart')} loadCurves={sets => api.curves(data, strategyIn, costs, startCash, sets) as Promise<Curves>} onClose={() => setOpt(null)} /></div>}
                     <div ref={resultsRef} style={{ scrollMarginTop: 70 }}>
@@ -324,13 +358,25 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
                                 <optgroup label={`Built-in strategies (${builtins.length})`}>{builtins.map(s => <option key={s.id} value={'b:' + s.id}>{s.name}</option>)}</optgroup>
                                 <optgroup label={`Ready-made scripts (${readyMade.length})`}>{readyMade.map(t => <option key={t.id} value={'t:' + t.id}>{t.name}</option>)}</optgroup>
                                 {saved.length > 0 && <optgroup label={`My saved scripts (${saved.length})`}>{saved.map(s => <option key={s.name} value={'s:' + s.name}>{s.name}</option>)}</optgroup>}
-                                <optgroup label="Build your own"><option value="new">Blank script (write code)</option><option value="rules">Point-and-click rules</option></optgroup>
+                                <optgroup label="Build your own"><option value="new">Blank script (write code)</option>
+                                    <option value="portfolio">Portfolio (all selected strategies, one capital)</option>
+                                    <option value="rules">Point-and-click rules</option></optgroup>
                             </select>
                             {pick.startsWith('s:') && <button className="ghost" style={{ marginTop: 6, minHeight: 32, padding: '4px 12px' }} onClick={deleteSaved}>Delete this saved script</button>}
                             {sid !== 'script' && def && <div className="note">{def.description}</div>}
                             {sid !== 'rules' && sid !== 'script' && def?.params.map(p => (
                                 <div key={p.key}><label>{p.label}</label>
                                     <input type="number" inputMode="decimal" min={p.min} max={p.max} step={p.step} value={params[p.key] ?? p.default} onChange={e => setParams({ ...params, [p.key]: +e.target.value })} /></div>))}
+                            {sid === 'portfolio' && (
+                                <PortfolioBuilder
+                                    members={members}
+                                    onChange={setMembers}
+                                    templates={templates}
+                                    builtins={builtins}
+                                    saved={saved}
+                                    futures={futures}
+                                />
+                            )}
                             {sid === 'rules' && <RuleBuilder rules={rules} onChange={setRules} futures={futures} />}
                             {sid === 'script' && <ScriptEditor code={code} setCode={setCode} params={params} setParams={setParams} hidePickers onInputs={setScriptInputs}
                                 onSavedChanged={name => { api.scriptSaved().then(setSaved).catch(() => { }); if (name) setPick('s:' + name) }} />}
@@ -366,7 +412,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
 
                         {side === 'wallet' && <WalletPanel wallet={wallet} error={walletErr} loading={walletLoading} market={data.market} symbol={data.symbol} hasKeys={keysOk} onRefresh={() => loadWallet(true)} />}
 
-                        {side === 'trade' && <TraderPanel data={data} strategy={strategyIn} costs={costs} liveEnabled={!!health?.liveEnabled} hasKeys={keysOk} quote={quote}
+                        {side === 'trade' && <TraderPanel data={data} strategy={strategyIn} costs={costs} liveEnabled={!!health?.liveEnabled} hasKeys={keysOk} quote={quote} price={live?.price ?? null}
                             st={trader} session={session} onRefresh={refreshTrader} />}
 
                         {side === 'research' && (

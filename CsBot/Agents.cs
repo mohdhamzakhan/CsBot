@@ -356,6 +356,8 @@ public sealed class AgentManager
                 role = a.Role,
                 data = a.Req.Data,
                 capital = a.Req.Capital,
+                strategy = a.Req.Strategy,
+                costs = a.Req.Costs,
                 state = run ? t.State : "stopped",
                 running = run,
                 price = t.LastPrice,

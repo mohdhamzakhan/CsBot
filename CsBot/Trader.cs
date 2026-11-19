@@ -50,7 +50,7 @@ public interface IExecutor
 public sealed class PaperExecutor : IExecutor
 {
     private readonly SimPortfolio _pf; private readonly double _start; private readonly List<Fill> _fills = new();
-    public PaperExecutor(CostConfig cost, double capital, double band) { _pf = new SimPortfolio(cost, capital, band); _start = capital; }
+    public PaperExecutor(CostConfig cost, double capital, double band, double minQty = 0) { _pf = new SimPortfolio(cost, capital, band) { MinQty = minQty }; _start = capital; }
     public double Units => _pf.Units;
     public bool Halted => false;
     public string HaltReason => "";
@@ -60,8 +60,17 @@ public sealed class PaperExecutor : IExecutor
     public void AccrueFunding(double price, double hours) => _pf.AccrueFunding(price, hours);
     public double Equity(double price) => _pf.Wealth(price);
     public ExecutorState Export() => new(new Dictionary<string, double>
-    { ["cash"] = _pf.Cash, ["units"] = _pf.Units, ["fees"] = _pf.Fees, ["tds"] = _pf.TdsWithheld, ["funding"] = _pf.Funding, ["traded"] = _pf.Traded,
-      ["slip"] = _pf.SlipCost, ["entry"] = _pf.Entry, ["trades"] = _pf.Trades }, _fills.ToList());
+    {
+        ["cash"] = _pf.Cash,
+        ["units"] = _pf.Units,
+        ["fees"] = _pf.Fees,
+        ["tds"] = _pf.TdsWithheld,
+        ["funding"] = _pf.Funding,
+        ["traded"] = _pf.Traded,
+        ["slip"] = _pf.SlipCost,
+        ["entry"] = _pf.Entry,
+        ["trades"] = _pf.Trades
+    }, _fills.ToList());
     public void Import(ExecutorState s)
     {
         double G(string k) => s.Num.TryGetValue(k, out var v) ? v : 0;
@@ -70,11 +79,23 @@ public sealed class PaperExecutor : IExecutor
         _fills.Clear(); _fills.AddRange(s.Fills);
     }
     public bool ForgetPosition() => false;
-    public object Snapshot(double price) => new { start = _start, equity = _pf.Wealth(price), liquid = _pf.Liquid(price), units = _pf.Units,
-        fees = _pf.Fees, tdsWithheld = _pf.TdsWithheld, funding = _pf.Funding, trades = _pf.Trades,
-        side = _pf.Units > 0 ? "long" : _pf.Units < 0 ? "short" : "flat", entryPrice = _pf.Entry, notional = Math.Abs(_pf.Units) * price,
-        unrealizedPnl = _pf.Units == 0 ? 0 : _pf.Units * (price - _pf.Entry), unrealizedPct = _pf.Units == 0 || _pf.Entry == 0 ? 0 : Math.Sign(_pf.Units) * (price / _pf.Entry - 1) * 100,
-        weight = _pf.Weight(price) };
+    public object Snapshot(double price) => new
+    {
+        start = _start,
+        equity = _pf.Wealth(price),
+        liquid = _pf.Liquid(price),
+        units = _pf.Units,
+        fees = _pf.Fees,
+        tdsWithheld = _pf.TdsWithheld,
+        funding = _pf.Funding,
+        trades = _pf.Trades,
+        side = _pf.Units > 0 ? "long" : _pf.Units < 0 ? "short" : "flat",
+        entryPrice = _pf.Entry,
+        notional = Math.Abs(_pf.Units) * price,
+        unrealizedPnl = _pf.Units == 0 ? 0 : _pf.Units * (price - _pf.Entry),
+        unrealizedPct = _pf.Units == 0 || _pf.Entry == 0 ? 0 : Math.Sign(_pf.Units) * (price / _pf.Entry - 1) * 100,
+        weight = _pf.Weight(price)
+    };
 }
 
 /// <summary>
@@ -268,8 +289,15 @@ public sealed class Trader
     private object Details => _details ??= new
     {
         strategy = StrategyInfo.Describe(_cfg.StrategyId, _cfg.Params, _cfg.Code, _band),
-        mode = _cfg.Mode, market = _cfg.Market.ToString().ToLower(), exchange = _cfg.Exchange, symbol = _cfg.Symbol, intervalMin = _cfg.IntervalMin,
-        capital = _cfg.Capital, rebalanceBand = _band, costs = StrategyInfo.Costs(_cfg.Cost), startedAt = new DateTimeOffset(_startedAt, TimeSpan.Zero).ToUnixTimeSeconds(),
+        mode = _cfg.Mode,
+        market = _cfg.Market.ToString().ToLower(),
+        exchange = _cfg.Exchange,
+        symbol = _cfg.Symbol,
+        intervalMin = _cfg.IntervalMin,
+        capital = _cfg.Capital,
+        rebalanceBand = _band,
+        costs = StrategyInfo.Costs(_cfg.Cost),
+        startedAt = new DateTimeOffset(_startedAt, TimeSpan.Zero).ToUnixTimeSeconds(),
         risk = _cfg.Mode == "live" ? new { _cfg.Risk.MaxOrderNotional, _cfg.Risk.MaxPositionNotional, _cfg.Risk.MaxLeverage, _cfg.Risk.DailyLossPct, _cfg.PricePrecision, _cfg.QtyPrecision } : null
     };
 
@@ -282,7 +310,7 @@ public sealed class Trader
         _reqJson = requestJson; _posOpenedAt = posOpenedAt;
         _cfg = cfg; _fetch = fetch; _band = band; _stratFactory = factory; _strat = factory();
         _price = priceFeed ?? (async ct => (await LiveFeed.GetAsync(cfg.Market, cfg.Exchange, cfg.Symbol, cfg.IntervalMin, ct)).Price);
-        _ex = cfg.Mode == "live" ? new LiveExecutor(cs ?? throw new ArgumentNullException(nameof(cs)), cfg, band, Log) : new PaperExecutor(cfg.Cost, cfg.Capital, band);
+        _ex = cfg.Mode == "live" ? new LiveExecutor(cs ?? throw new ArgumentNullException(nameof(cs)), cfg, band, Log) : new PaperExecutor(cfg.Cost, cfg.Capital, band, MinOrders.For(cfg.Market, cfg.Symbol)?.MinQty ?? 0);
         if (restore != null) { _ex.Import(restore); Log($"Resumed from saved state: position {_ex.Units:0.######}"); }
     }
 
@@ -496,14 +524,26 @@ public sealed class Trader
         string[] log; lock (_log) log = _log.TakeLast(60).ToArray();
         return new
         {
-            id = Id, mode = _cfg.Mode, market = _cfg.Market.ToString().ToLower(), symbol = _cfg.Symbol, intervalMin = _cfg.IntervalMin,
-            strategy = _cfg.StrategyId, state = _state, running = IsRunning, lastPrice = Mark, lastClose = _lastPrice,
-            priceAgeSec = _markAt == default ? (double?)null : (DateTime.UtcNow - _markAt).TotalSeconds, priceError = _markErr,
-            lastCheckAgeSec = _lastCheck == default ? (double?)null : (DateTime.UtcNow - _lastCheck).TotalSeconds, lastError = _lastError,
+            id = Id,
+            mode = _cfg.Mode,
+            market = _cfg.Market.ToString().ToLower(),
+            symbol = _cfg.Symbol,
+            intervalMin = _cfg.IntervalMin,
+            strategy = _cfg.StrategyId,
+            state = _state,
+            running = IsRunning,
+            lastPrice = Mark,
+            lastClose = _lastPrice,
+            priceAgeSec = _markAt == default ? (double?)null : (DateTime.UtcNow - _markAt).TotalSeconds,
+            priceError = _markErr,
+            lastCheckAgeSec = _lastCheck == default ? (double?)null : (DateTime.UtcNow - _lastCheck).TotalSeconds,
+            lastError = _lastError,
             lastBar = _lastBar == default ? null : (long?)new DateTimeOffset(_lastBar, TimeSpan.Zero).ToUnixTimeSeconds(),
             nextDecision = _lastBar == default ? null : (long?)(new DateTimeOffset(_lastBar, TimeSpan.Zero).ToUnixTimeSeconds() + 2L * _cfg.IntervalMin * 60),
-            targetWeight = _target, account = _ex.Snapshot(Mark),
-            strategyName = StrategyInfo.Describe(_cfg.StrategyId, _cfg.Params, _cfg.Code, _band).Name, config = Details,
+            targetWeight = _target,
+            account = _ex.Snapshot(Mark),
+            strategyName = StrategyInfo.Describe(_cfg.StrategyId, _cfg.Params, _cfg.Code, _band).Name,
+            config = Details,
             fills = _ex.Fills.TakeLast(50).Select(f => new { t = new DateTimeOffset(f.Time, TimeSpan.Zero).ToUnixTimeSeconds(), side = f.Side, price = f.Price, qty = f.Qty, fee = f.Fee }),
             log
         };

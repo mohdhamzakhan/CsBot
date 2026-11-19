@@ -3,7 +3,7 @@ import { api } from './api'
 import type { Costs, MarketRef, SessionInfo, StrategyIn, TraderInfo, TraderStatus } from './api'
 
 type Props = {
-    data: MarketRef; strategy: StrategyIn; costs: Costs; liveEnabled: boolean; hasKeys: boolean; quote: string
+    data: MarketRef; strategy: StrategyIn; costs: Costs; liveEnabled: boolean; hasKeys: boolean; quote: string; price?: number | null
     st: TraderStatus | null; session: SessionInfo | null; onRefresh: () => void
 }
 const PHRASE = 'I UNDERSTAND THE RISKS'
@@ -66,7 +66,7 @@ function StrategyCard({ info, quote }: { info: TraderInfo; quote: string }) {
 
 const f2 = (x: unknown, d = 2) => Number(x).toLocaleString(undefined, { maximumFractionDigits: d })
 
-export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKeys, quote, st, session, onRefresh }: Props) {
+export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKeys, quote,price, st, session, onRefresh }: Props) {
     const [mode, setMode] = useState<'paper' | 'live'>('paper')
     const [capital, setCapital] = useState(data.market === 'spot' ? 10000 : 100)
     const [maxOrder, setMaxOrder] = useState(0)
@@ -98,6 +98,9 @@ export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKey
     const saved = !!session?.exists && !running
     const savedLive = session?.mode === 'live'
     const blockedBySaved = saved && !!session?.hasPosition
+    const MIN: Record<string, [number, number]> = { BTCUSDT: [0.002, 3], ETHUSDT: [0.02, 2], SOLUSDT: [0.23, 2] }
+    const mn = data.market === 'futures' ? MIN[data.symbol.toUpperCase()] : undefined
+    useEffect(() => { if (mn) setQtyPrec(mn[1]) }, [data.symbol, data.market])
 
     return (
         <div>
@@ -132,6 +135,13 @@ export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKey
                                 <option value="paper">Paper (simulated)</option><option value="live">LIVE (real orders)</option></select></div>
                         <div><label>Capital ({quote})</label><input type="number" inputMode="decimal" value={capital} onChange={e => setCapital(+e.target.value)} /></div>
                     </div>
+                    {mn && price ? (() => {
+                        const notional = mn[0] * price, lv = mode === 'live' ? maxLev : costs.leverage, need = notional / capital
+                        return <div className={need > Math.max(1, lv) ? 'warnbox' : 'note'}>
+                            Minimum order on {data.symbol}: {mn[0]} (about {notional.toFixed(0)} USDT). With {capital} USDT the strategy must size {need.toFixed(1)}x capital to place one
+                            {need > lv ? `, which is above your ${lv}x limit, so no order can ever be placed. Raise the capital.` : need > 1 ? ' (needs a script size above 1).' : '.'}
+                        </div>
+                    })() : null}
                     <div className="note">Uses the market, strategy and costs from the other tabs. It decides when a candle closes and shows the live price in between. An open position is saved to a file, so it is picked up again if the app restarts.</div>
 
                     {mode === 'live' && (<>

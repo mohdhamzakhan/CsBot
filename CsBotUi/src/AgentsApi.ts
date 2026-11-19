@@ -3,6 +3,7 @@ import type { MarketRef, StrategyIn } from './api'
 
 export type AgentRow = {
     id: string; name: string; color: string; role: string; data: MarketRef; capital: number
+    strategy: StrategyIn; costs: AgentCosts | null
     state: string; running: boolean; price: number; target: number; account: Record<string, any>
     equity: number; pnl: number; realized: number; closed: number; wins: number; winRate: number | null
     signals: number; error: string; note: string; curve: number[][]

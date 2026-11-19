@@ -6,7 +6,8 @@ import { agentsApi } from './agentsApi'
 import type { AgentRow, AgentsSnap } from './agentsApi'
 import AgentChart from './AgentChart'
 import Vortex from './Vortex'
-import { TIMEFRAMES } from './TopBar'
+import ScannerPanel from './ScannerPanel'
+import { DAYS_FOR, TIMEFRAMES } from './TopBar'
 
 const tfName = (m: number) => TIMEFRAMES.find(t => t[0] === m)?.[1] ?? `${m}m`
 const fmt = (x: number, d = 2) => x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -101,7 +102,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
     const [err, setErr] = useState('')
 
     useEffect(() => {
-        api.strategies().then(s => setBuiltins(s.filter(x => x.id !== 'script' && x.id !== 'rules'))).catch(() => { })
+        api.strategies().then(s => setBuiltins(s.filter(x => x.id !== 'script' && x.id !== 'rules' && x.id !== 'portfolio'))).catch(() => { })
         api.scriptTemplates().then(t => { setTemplates(t.filter(x => x.id !== 'blank')); setTeam(cur => cur.filter(id => t.some(x => x.id === id))) }).catch(() => { })
         api.scriptSaved().then(setSaved).catch(() => { })
         api.myFee('coinswitchx', 'BTC').then(r => { if (r.found && r.takerPct != null) setFee(r.takerPct) }).catch(() => { })   // use your real spot fee when known
@@ -183,6 +184,7 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
     const [dlg, setDlg] = useState(false)
     const [lv, setLv] = useState<LiveTick | null>(null)
     const [busy, setBusy] = useState(false)
+    const [tab, setTab] = useState<'agents' | 'scanner'>('agents')
     const [narrow, setNarrow] = useState(window.innerWidth <= 700)
     const now = useNow()
 
@@ -190,6 +192,19 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
     const load = useCallback(async () => { try { setSnap(await agentsApi.list()); setErr('') } catch (e: any) { setErr(e.message) } }, [])
     useEffect(() => { load(); const id = setInterval(() => { if (!document.hidden) load() }, 3000); return () => clearInterval(id) }, [load])
     const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); await load() } catch (e: any) { setErr(e.message) } finally { setBusy(false) } }
+
+    /** Copies an agent's market, timeframe and strategy into the workbench and opens its Paper / Live tab. It starts nothing: the live gate and the typed confirmation still apply. */
+    const goLive = async (a: AgentRow) => {
+        const [tpl, sv] = await Promise.all([api.scriptTemplates().catch(() => [] as ScriptTemplate[]), api.scriptSaved().catch(() => [] as SavedScript[])])
+        const s = a.strategy
+        let pick = s.id === 'script' ? 'new' : 'b:' + s.id
+        if (s.id === 'script') { const t = tpl.find(x => x.code === s.code), v = sv.find(x => x.code === s.code); pick = t ? 't:' + t.id : v ? 's:' + v.name : 'new' }
+        let old: Record<string, unknown> = {}
+        try { old = JSON.parse(localStorage.getItem('csbot.state.v1') || '{}') || {} } catch { /* start fresh */ }
+        localStorage.setItem('csbot.state.v1', JSON.stringify({ ...old, data: { ...a.data, days: DAYS_FOR[a.data.intervalMin] ?? 365 }, sid: s.id, pick, code: s.code ?? '', params: s.params ?? {} }))
+        sessionStorage.setItem('csbot.tab', 'trade')
+        onBack()
+    }
 
     const agents = snap?.agents ?? []
     const q = snap?.quote ?? null
@@ -215,6 +230,7 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                 <button className="a-btn tiny" onClick={onBack} aria-label="Back to the workbench">&larr; Workbench</button>
                 <div className="a-logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4" /></svg></div>
                 <div className="a-brand"><b>ASTRA</b><small>/ agent terminal &middot; {agents.length} agent{agents.length === 1 ? '' : 's'}</small></div>
+                <nav className="a-nav"><button className={tab === 'agents' ? 'on' : ''} onClick={() => setTab('agents')}>Agents</button><button className={tab === 'scanner' ? 'on' : ''} onClick={() => setTab('scanner')}>Scanner</button></nav>
                 <div className="a-spacer" />
                 <span className="a-mode"><i />PAPER TRADING</span>
                 <div className="a-clock"><b>{utc}</b><small>UTC / SESSION {session}</small></div>
@@ -232,107 +248,110 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
             <div className="a-wrap">
                 {err && <div className="a-err">{err}</div>}
 
-                {snap && agents.length === 0 && (
-                    <div className="a-hero">
-                        <h2>No agents running</h2>
-                        <p>Launch several strategies at once. Each one trades its own simulated account on live prices, and this page shows them side by side with a combined result.</p>
-                        <div className="a-actions"><button className="a-btn main" onClick={() => setDlg(true)}>Launch a team of six</button></div>
-                    </div>)}
+                {tab === 'scanner' ? <ScannerPanel onPromoted={load} /> : <>
+                    {snap && agents.length === 0 && (
+                        <div className="a-hero">
+                            <h2>No agents running</h2>
+                            <p>Launch several strategies at once. Each one trades its own simulated account on live prices, and this page shows them side by side with a combined result.</p>
+                            <div className="a-actions"><button className="a-btn main" onClick={() => setDlg(true)}>Launch a team of six</button></div>
+                        </div>)}
 
-                {agents.length > 0 && c && (<>
-                    <section className="a-kpis">
-                        <div className="a-kpi"><span>System balance</span><b><Money v={c.equity} q={q} /></b><small>initial capital <Money v={c.capital} q={q} d={0} /></small></div>
-                        <div className="a-kpi"><span>Combined P&amp;L</span><b className={pnlUp ? 'a-pos' : 'a-neg'}><Money v={c.pnl} q={q} sign /></b><small>{sgn(c.pnlPct)}{Math.abs(c.pnlPct).toFixed(2)}% on capital</small></div>
-                        <div className="a-kpi"><span>Win rate</span><b style={{ color: c.winRate != null && c.winRate >= 50 ? 'var(--up)' : undefined }}>{c.winRate != null ? c.winRate.toFixed(1) + '%' : '\u2014'}</b><small>{c.closed} closed trades</small></div>
-                        <div className="a-kpi"><span>Signals processed</span><b>{c.signals.toLocaleString('en-US')}</b><small>candles evaluated by agents</small></div>
-                        <div className="a-kpi"><span>Active agents</span><b>{String(c.active).padStart(2, '0')}<em>/ {String(c.total).padStart(2, '0')}</em></b><small>running now</small></div>
-                    </section>
+                    {agents.length > 0 && c && (<>
+                        <section className="a-kpis">
+                            <div className="a-kpi"><span>System balance</span><b><Money v={c.equity} q={q} /></b><small>initial capital <Money v={c.capital} q={q} d={0} /></small></div>
+                            <div className="a-kpi"><span>Combined P&amp;L</span><b className={pnlUp ? 'a-pos' : 'a-neg'}><Money v={c.pnl} q={q} sign /></b><small>{sgn(c.pnlPct)}{Math.abs(c.pnlPct).toFixed(2)}% on capital</small></div>
+                            <div className="a-kpi"><span>Win rate</span><b style={{ color: c.winRate != null && c.winRate >= 50 ? 'var(--up)' : undefined }}>{c.winRate != null ? c.winRate.toFixed(1) + '%' : '\u2014'}</b><small>{c.closed} closed trades</small></div>
+                            <div className="a-kpi"><span>Signals processed</span><b>{c.signals.toLocaleString('en-US')}</b><small>candles evaluated by agents</small></div>
+                            <div className="a-kpi"><span>Active agents</span><b>{String(c.active).padStart(2, '0')}<em>/ {String(c.total).padStart(2, '0')}</em></b><small>running now</small></div>
+                        </section>
 
-                    <div className="a-grid">
-                        <Panel n="01" title="The vortex" tag="agent conviction" cls="s3">
-                            <div className="a-vortex">
-                                <Vortex intensity={0.7 + conv * 1.5} />
-                                <div className="a-readout" style={{ left: 12, bottom: 12 }}>Angular velocity<b>{(0.9 + conv * 2.2).toFixed(2)} rad/s</b></div>
-                                <div className="a-readout" style={{ right: 12, bottom: 12 }}>Agents in flow<b>{c.active} / {c.total}</b></div>
-                            </div>
-                            <div className="a-link"><LinkGraph agents={agents} /></div>
-                            <div className="a-stats4">
-                                <span>Coherence<b>{coherence.toFixed(0)}%</b></span><span>Conviction<b>{(conv * 100).toFixed(0)}%</b></span>
-                                <span>Running<b>{c.active}</b></span><span>Fills<b>{c.fillsTotal}</b></span>
-                            </div>
-                            <div className="a-note" style={{ padding: '0 14px 10px', marginTop: 0 }}>Decorative: it spins faster the larger the positions the running agents want. Linked dots hold the same stance.</div>
-                        </Panel>
-
-                        <Panel n="02" title={fa ? fa.data.symbol : 'Chart'} tag="live tape" cls="s3">
-                            {fa ? (<>
-                                <div className="a-chart-head">
-                                    <span className={`px ${chg != null ? (chg >= 0 ? 'up' : 'dn') : ''}`}>{shownPx ? fmt(shownPx, shownPx >= 1000 ? 2 : 4) : '...'}</span>
-                                    {chg != null && <small className={chg >= 0 ? 'a-pos' : 'a-neg'}>{sgn(chg)}{Math.abs(chg).toFixed(2)}% 24h</small>}
-                                    {lv?.high != null && lv?.low != null && <small>H {fmt(lv.high, 2)} &middot; L {fmt(lv.low, 2)}</small>}
-                                    <small>{tfName(fa.data.intervalMin)} &middot; {fa.name}{agents.length > 1 ? ' (tap an agent below to switch)' : ''}</small>
+                        <div className="a-grid">
+                            <Panel n="01" title="The vortex" tag="agent conviction" cls="s3">
+                                <div className="a-vortex">
+                                    <Vortex intensity={0.7 + conv * 1.5} />
+                                    <div className="a-readout" style={{ left: 12, bottom: 12 }}>Angular velocity<b>{(0.9 + conv * 2.2).toFixed(2)} rad/s</b></div>
+                                    <div className="a-readout" style={{ right: 12, bottom: 12 }}>Agents in flow<b>{c.active} / {c.total}</b></div>
                                 </div>
-                                <AgentChart data={fa.data} marks={marks} height={narrow ? 230 : 330} onLive={setLv} />
-                            </>) : <div className="a-empty">No agent selected.</div>}
-                        </Panel>
+                                <div className="a-link"><LinkGraph agents={agents} /></div>
+                                <div className="a-stats4">
+                                    <span>Coherence<b>{coherence.toFixed(0)}%</b></span><span>Conviction<b>{(conv * 100).toFixed(0)}%</b></span>
+                                    <span>Running<b>{c.active}</b></span><span>Fills<b>{c.fillsTotal}</b></span>
+                                </div>
+                                <div className="a-note" style={{ padding: '0 14px 10px', marginTop: 0 }}>Decorative: it spins faster the larger the positions the running agents want. Linked dots hold the same stance.</div>
+                            </Panel>
 
-                        <Panel n="03" title="Combined profit" tag={`${c.active} agents`} cls="s2">
-                            <div className="a-pb">
-                                <div className={pnlUp ? 'a-pos' : 'a-neg'} style={{ font: '500 26px var(--mono)' }}><Money v={c.pnl} q={q} sign /></div>
-                                <div className="a-note" style={{ marginTop: 0 }}>{sgn(c.pnlPct)}{Math.abs(c.pnlPct).toFixed(2)}% net return, after simulated fees and slippage</div>
-                                <Spark pts={c.curve} color={pnlUp ? '#1b9a7f' : '#d6455d'} fill height={120} zero />
-                            </div>
-                        </Panel>
-
-                        <Panel n="04" title="Hesitation trace" tag={`${(conv * 100).toFixed(0)}% conviction`} cls="s2">
-                            <div className="a-pb">
-                                <div className="a-note" style={{ marginTop: 0 }}>Average position size the running agents want. Dips are moments when agents stepped aside.</div>
-                                <Spark pts={c.convictionCurve} color="#3b4660" height={120} range={[0, 1]} />
-                            </div>
-                        </Panel>
-
-                        <Panel n="05" title="Execution stream" tag={`${c.fillsTotal} fills`} cls="s2">
-                            <div className="a-pb">
-                                {snap!.fills.length === 0 ? <div className="a-empty" style={{ minHeight: 120 }}>No trades yet. Agents act when a candle closes.</div> : (
-                                    <div className="a-stream">
-                                        {snap!.fills.slice(0, 40).map((f, i) => (
-                                            <div className="a-srow" key={i}>
-                                                <span className="tm">{new Date(f.t * 1000).toLocaleTimeString('en-GB')}</span>
-                                                <span className="who" style={{ color: f.color }}>{f.name.slice(0, 4)}</span>
-                                                <span><b className={f.side === 'buy' ? 'a-pos' : 'a-neg'}>{f.side.toUpperCase()}</b> <small>{f.symbol} {f.qty.toFixed(5)}</small></span>
-                                                <span className="px">{fmt(f.price, f.price >= 1000 ? 2 : 4)}</span>
-                                            </div>))}
-                                    </div>)}
-                            </div>
-                        </Panel>
-                    </div>
-
-                    <div className="a-ledger-h"><span>The {agents.length} / agent ledger</span><span>each agent, one strategy &middot; shared P&amp;L</span></div>
-                    <div className="a-ledger">
-                        {agents.map((a, i) => {
-                            const side = stance(a), up = a.pnl >= 0, bad = a.state === 'error' || a.state === 'halted'
-                            return (
-                                <article key={a.id} className={`a-agent ${fa?.id === a.id ? 'on' : ''} ${a.running ? '' : 'off'}`} style={{ ['--c' as any]: a.color }} onClick={() => setFocus(a.id)}>
-                                    <div className="a-agent-top"><span>AG {String(i + 1).padStart(2, '0')}</span><span>{tfName(a.data.intervalMin)} &middot; {a.data.symbol}</span></div>
-                                    <Face color={a.color} />
-                                    <h4>{a.name}</h4>
-                                    <div className="a-role" title={a.role}>{a.role}</div>
-                                    <div className="a-meta"><span>{side}</span><span>win <b>{a.winRate != null ? Math.round(a.winRate) + '%' : '\u2014'}</b></span></div>
-                                    <div className={`a-apnl ${up ? 'a-pos' : 'a-neg'}`}><Money v={a.pnl} q={q} sign d={q === 'INR' ? 0 : 2} /></div>
-                                    <Spark pts={a.curve} color={a.color} height={32} />
-                                    <span className={`a-state ${bad ? 'bad' : ''}`} title={bad ? a.note : a.error}>{a.running ? (bad ? a.state : a.error ? 'retrying' : 'running') : 'stopped'}</span>
-                                    <div className="a-ctl" onClick={e => e.stopPropagation()}>
-                                        {a.running ? <button className="a-btn tiny" disabled={busy} onClick={() => act(() => agentsApi.stop(a.id))}>Stop</button>
-                                            : <button className="a-btn tiny" disabled={busy} onClick={() => act(() => agentsApi.resume(a.id))}>Resume</button>}
-                                        {side !== 'flat' && <button className="a-btn tiny" disabled={busy} onClick={() => { if (window.confirm(`Close ${a.name}'s simulated position now?`)) act(() => agentsApi.close(a.id)) }}>Close</button>}
-                                        <button className="a-btn tiny danger" disabled={busy} onClick={() => { if (window.confirm(`Remove ${a.name} and its simulated account?`)) act(() => agentsApi.remove(a.id)) }}>&times;</button>
+                            <Panel n="02" title={fa ? fa.data.symbol : 'Chart'} tag="live tape" cls="s3">
+                                {fa ? (<>
+                                    <div className="a-chart-head">
+                                        <span className={`px ${chg != null ? (chg >= 0 ? 'up' : 'dn') : ''}`}>{shownPx ? fmt(shownPx, shownPx >= 1000 ? 2 : 4) : '...'}</span>
+                                        {chg != null && <small className={chg >= 0 ? 'a-pos' : 'a-neg'}>{sgn(chg)}{Math.abs(chg).toFixed(2)}% 24h</small>}
+                                        {lv?.high != null && lv?.low != null && <small>H {fmt(lv.high, 2)} &middot; L {fmt(lv.low, 2)}</small>}
+                                        <small>{tfName(fa.data.intervalMin)} &middot; {fa.name}{agents.length > 1 ? ' (tap an agent below to switch)' : ''}</small>
                                     </div>
-                                </article>)
-                        })}
-                    </div>
-                    <div className="a-note" style={{ marginTop: 14 }}>
-                        All agents run on paper money with real CoinSwitch prices, so results ignore queue position and real-world fill problems. Agents keep running on the server when this page is closed and are restored after a restart.
-                    </div>
-                </>)}
+                                    <AgentChart data={fa.data} marks={marks} height={narrow ? 230 : 330} onLive={setLv} />
+                                </>) : <div className="a-empty">No agent selected.</div>}
+                            </Panel>
+
+                            <Panel n="03" title="Combined profit" tag={`${c.active} agents`} cls="s2">
+                                <div className="a-pb">
+                                    <div className={pnlUp ? 'a-pos' : 'a-neg'} style={{ font: '500 26px var(--mono)' }}><Money v={c.pnl} q={q} sign /></div>
+                                    <div className="a-note" style={{ marginTop: 0 }}>{sgn(c.pnlPct)}{Math.abs(c.pnlPct).toFixed(2)}% net return, after simulated fees and slippage</div>
+                                    <Spark pts={c.curve} color={pnlUp ? '#1b9a7f' : '#d6455d'} fill height={120} zero />
+                                </div>
+                            </Panel>
+
+                            <Panel n="04" title="Hesitation trace" tag={`${(conv * 100).toFixed(0)}% conviction`} cls="s2">
+                                <div className="a-pb">
+                                    <div className="a-note" style={{ marginTop: 0 }}>Average position size the running agents want. Dips are moments when agents stepped aside.</div>
+                                    <Spark pts={c.convictionCurve} color="#3b4660" height={120} range={[0, 1]} />
+                                </div>
+                            </Panel>
+
+                            <Panel n="05" title="Execution stream" tag={`${c.fillsTotal} fills`} cls="s2">
+                                <div className="a-pb">
+                                    {snap!.fills.length === 0 ? <div className="a-empty" style={{ minHeight: 120 }}>No trades yet. Agents act when a candle closes.</div> : (
+                                        <div className="a-stream">
+                                            {snap!.fills.slice(0, 40).map((f, i) => (
+                                                <div className="a-srow" key={i}>
+                                                    <span className="tm">{new Date(f.t * 1000).toLocaleTimeString('en-GB')}</span>
+                                                    <span className="who" style={{ color: f.color }}>{f.name.slice(0, 4)}</span>
+                                                    <span><b className={f.side === 'buy' ? 'a-pos' : 'a-neg'}>{f.side.toUpperCase()}</b> <small>{f.symbol} {f.qty.toFixed(5)}</small></span>
+                                                    <span className="px">{fmt(f.price, f.price >= 1000 ? 2 : 4)}</span>
+                                                </div>))}
+                                        </div>)}
+                                </div>
+                            </Panel>
+                        </div>
+
+                        <div className="a-ledger-h"><span>The {agents.length} / agent ledger</span><span>each agent, one strategy &middot; shared P&amp;L</span></div>
+                        <div className="a-ledger">
+                            {agents.map((a, i) => {
+                                const side = stance(a), up = a.pnl >= 0, bad = a.state === 'error' || a.state === 'halted'
+                                return (
+                                    <article key={a.id} className={`a-agent ${fa?.id === a.id ? 'on' : ''} ${a.running ? '' : 'off'}`} style={{ ['--c' as any]: a.color }} onClick={() => setFocus(a.id)}>
+                                        <div className="a-agent-top"><span>AG {String(i + 1).padStart(2, '0')}</span><span>{tfName(a.data.intervalMin)} &middot; {a.data.symbol}</span></div>
+                                        <Face color={a.color} />
+                                        <h4>{a.name}</h4>
+                                        <div className="a-role" title={a.role}>{a.role}</div>
+                                        <div className="a-meta"><span>{side}</span><span>win <b>{a.winRate != null ? Math.round(a.winRate) + '%' : '\u2014'}</b></span></div>
+                                        <div className={`a-apnl ${up ? 'a-pos' : 'a-neg'}`}><Money v={a.pnl} q={q} sign d={q === 'INR' ? 0 : 2} /></div>
+                                        <Spark pts={a.curve} color={a.color} height={32} />
+                                        <span className={`a-state ${bad ? 'bad' : ''}`} title={bad ? a.note : a.error}>{a.running ? (bad ? a.state : a.error ? 'retrying' : 'running') : 'stopped'}</span>
+                                        <div className="a-ctl" onClick={e => e.stopPropagation()}>
+                                            {a.running ? <button className="a-btn tiny" disabled={busy} onClick={() => act(() => agentsApi.stop(a.id))}>Stop</button>
+                                                : <button className="a-btn tiny" disabled={busy} onClick={() => act(() => agentsApi.resume(a.id))}>Resume</button>}
+                                            {side !== 'flat' && <button className="a-btn tiny" disabled={busy} onClick={() => { if (window.confirm(`Close ${a.name}'s simulated position now?`)) act(() => agentsApi.close(a.id)) }}>Close</button>}
+                                            <button className="a-btn tiny" disabled={busy} title="Copy this strategy to the Paper / Live tab (starts nothing)" onClick={() => { if (window.confirm(`Open ${a.name}'s strategy in the Paper / Live tab? Nothing starts: you still run the backtest gate and type the confirmation phrase.`)) goLive(a) }}>Go live</button>
+                                            <button className="a-btn tiny danger" disabled={busy} onClick={() => { if (window.confirm(`Remove ${a.name} and its simulated account?`)) act(() => agentsApi.remove(a.id)) }}>&times;</button>
+                                        </div>
+                                    </article>)
+                            })}
+                        </div>
+                        <div className="a-note" style={{ marginTop: 14 }}>
+                            All agents run on paper money with real CoinSwitch prices, so results ignore queue position and real-world fill problems. Agents keep running on the server when this page is closed and are restored after a restart.
+                        </div>
+                    </>)}
+                </>}
             </div>
 
             {dlg && <AddDialog quote={q} onClose={() => setDlg(false)} onDone={() => { setDlg(false); load() }} />}

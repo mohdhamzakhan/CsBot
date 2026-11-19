@@ -86,6 +86,17 @@ public sealed class LiveExecutor : IExecutor
         if (Math.Abs(targetUnits * price) > _cfg.Risk.MaxPositionNotional)
         { NoteError($"ORDER BLOCKED by your risk limit: target position {Math.Abs(targetUnits * price):F0} {Quote} exceeds 'Max position' {_cfg.Risk.MaxPositionNotional:F0}. Raise the limit or lower the capital."); return null; }
         double delta = targetUnits - Units;
+        if (MinOrders.For(_cfg.Market, _cfg.Symbol) is { } mo)
+        {
+            if (targetUnits != 0 && Math.Abs(targetUnits) < mo.MinQty)
+            {
+                if (Units == 0)
+                { NoteError($"ORDER BLOCKED by the exchange minimum: the strategy wants {Math.Abs(targetUnits):0.####} but the smallest order is {mo.MinQty} (about {mo.MinQty * price:F0} {Quote}). Raise the capital, or use a strategy size above 1x within your leverage limit."); return null; }
+                targetUnits = 0; delta = -Units;   // wants less than the tradable minimum: close fully rather than leave an untradable remainder
+            }
+            else if (targetUnits != 0 && Math.Abs(delta) < mo.MinQty)
+            { _log($"ORDER SKIPPED: the change {Math.Abs(delta):0.####} is below the exchange minimum {mo.MinQty}."); return null; }
+        }
         if (Math.Abs(delta) < Math.Pow(10, -_cfg.QtyPrecision))
         { _log($"ORDER SKIPPED: the needed change ({delta:0.########}) is smaller than the smallest quantity step ({_cfg.QtyPrecision} decimals). Raise the capital or 'Quantity decimals'."); return null; }
 
