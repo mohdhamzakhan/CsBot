@@ -6,7 +6,7 @@ export type AgentRow = {
     strategy: StrategyIn; costs: AgentCosts | null
     state: string; running: boolean; price: number; target: number; account: Record<string, any>
     equity: number; pnl: number; realized: number; closed: number; wins: number; winRate: number | null
-    signals: number; error: string; note: string; curve: number[][]
+    signals: number; error: string; note: string; log: string[]; curve: number[][]
 }
 export type AgentFill = { t: number; agent: string; name: string; color: string; symbol: string; side: 'buy' | 'sell'; price: number; qty: number; fee: number }
 export type AgentsSnap = {

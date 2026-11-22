@@ -5,6 +5,7 @@ import { scannerApi } from './scannerApi'
 import type { ScanReq, ScanRow, ScanSnap } from './scannerApi'
 import { TIMEFRAMES } from './TopBar'
 
+const LEVS = [2, 3, 5, 10, 15, 20]
 const DEFAULT_PICKS = ['t:ema_trend', 't:supertrend', 't:macd_trend', 't:donchian', 't:rsi_pullback', 't:bollinger_revert']
 const tfName = (m: number) => TIMEFRAMES.find(t => t[0] === m)?.[1] ?? `${m}m`
 const pct = (x: number, d = 1) => `${x >= 0 ? '+' : '\u2212'}${Math.abs(x).toFixed(d)}%`
@@ -22,6 +23,7 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
     const [picks, setPicks] = useState<string[]>(DEFAULT_PICKS)
     const [variants, setVariants] = useState(4)
     const [capital, setCapital] = useState(1000)
+    const [lev, setLev] = useState<number | null>(null)   // futures: no default, you choose
     const [fee, setFee] = useState<number | null>(null)
     const [templates, setTemplates] = useState<ScriptTemplate[]>([])
     const [builtins, setBuiltins] = useState<StrategyDef[]>([])
@@ -41,8 +43,8 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
 
     const req = useMemo<ScanReq>(() => ({
         market, symbols: symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean), timeframes: tfs, picks, variants, capital,
-        costs: market === 'spot' ? (fee != null ? { fee } : undefined) : { leverage: 1 },
-    }), [market, symbols, tfs, picks, variants, capital, fee])
+        costs: market === 'spot' ? (fee != null ? { fee } : undefined) : (lev != null ? { leverage: lev } : undefined),
+    }), [market, symbols, tfs, picks, variants, capital, fee, lev])
 
     const running = !!snap?.running
     useEffect(() => {      // how many combinations will this make? (also catches invalid input before starting)
@@ -56,7 +58,7 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
         try { await fn(); if (ok) setMsg(ok); await load() } catch (e: any) { setErr(e.message) } finally { setBusy(false) }
     }
     const toggle = <T,>(list: T[], v: T, set: (l: T[]) => void) => set(list.includes(v) ? list.filter(x => x !== v) : [...list, v])
-    const switchMarket = (m: Market) => { setMarket(m); setSymbols(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 100000 : 1000) }
+    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setSymbols(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 100000 : 1000) }
 
     const rows = useMemo(() => {
         const r = (snap?.cells ?? []).filter(c => c.ready && c.closed >= minClosed && (!bothPos || (c.btReturn > 0 && c.pnlPct > 0)))
@@ -87,6 +89,18 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
                             <div><label>Settings variations per strategy</label><select value={variants} onChange={e => setVariants(+e.target.value)}>{[1, 2, 3, 4, 5, 6, 8].map(n => <option key={n} value={n}>{n === 1 ? '1 (defaults only)' : n}</option>)}</select></div>
                             <div><label>Paper capital per combination</label><input type="number" inputMode="decimal" value={capital} onChange={e => setCapital(+e.target.value)} /></div>
                         </div>
+                        {market === 'futures' && (
+                            <div style={{ gridColumn: '1 / -1' }}>
+                                <label>Leverage &mdash; you choose</label>
+                                <div className="a-chips">
+                                    {LEVS.map(n => <button key={n} className={`a-chip ${lev === n ? 'on' : ''}`} onClick={() => setLev(n)}>{n}x</button>)}
+                                    <input type="number" inputMode="decimal" min={1} max={50} placeholder="other" style={{ width: 90, minHeight: 32 }} value={lev != null && !LEVS.includes(lev) ? lev : ''}
+                                        onChange={e => setLev(e.target.value === '' ? null : +e.target.value)} />
+                                </div>
+                                <div className="a-note" style={{ color: lev == null ? 'var(--down)' : undefined }}>
+                                    {lev == null ? 'Pick a leverage to continue. There is no default.' : `Each combination: a position is the strategy's signal x ${lev} x capital, so ${capital} fully in holds ${(capital * lev).toLocaleString('en-US')}. A move of roughly ${(100 / lev).toFixed(1)}% against it would liquidate it (less after fees and maintenance margin). Paper trading does not simulate liquidation yet.`}
+                                </div>
+                            </div>)}
                         <label>Timeframes</label>
                         <div className="a-chips">{TIMEFRAMES.map(([v, l]) => <button key={v} className={`a-chip ${tfs.includes(v) ? 'on' : ''}`} onClick={() => toggle(tfs, v, setTfs)}>{l}</button>)}</div>
                         <label>Strategies ({picks.length} selected)</label>

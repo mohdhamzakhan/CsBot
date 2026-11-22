@@ -13,6 +13,7 @@ const tfName = (m: number) => TIMEFRAMES.find(t => t[0] === m)?.[1] ?? `${m}m`
 const fmt = (x: number, d = 2) => x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
 const sgn = (x: number) => (x >= 0 ? '+' : '\u2212')
 const stance = (a: AgentRow) => String(a.account?.side ?? 'flat')
+const LEVS = [2, 3, 5, 10, 15, 20]
 const DEFAULT_TEAM = ['ema_trend', 'macd_trend', 'supertrend', 'donchian', 'rsi_pullback', 'bollinger_revert']
 
 /** INR is shown with the rupee sign in front; USDT as a small unit after the number. */
@@ -76,7 +77,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
     const [symbol, setSymbol] = useState(inr ? 'BTC/INR' : 'BTCUSDT')
     const [tf, setTf] = useState(60)
     const [capital, setCapital] = useState(inr ? 10000 : 100)
-    const [lev, setLev] = useState(1)
+    const [lev, setLev] = useState<number | null>(null)   // futures: no default, you choose
     const [name, setName] = useState('')
     const [builtins, setBuiltins] = useState<StrategyDef[]>([])
     const [templates, setTemplates] = useState<ScriptTemplate[]>([])
@@ -94,7 +95,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
         api.myFee('coinswitchx', 'BTC').then(r => { if (r.found && r.takerPct != null) setFee(r.takerPct) }).catch(() => { })   // use your real spot fee when known
     }, [])
 
-    const switchMarket = (m: Market) => { setMarket(m); setSymbol(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 10000 : 100) }
+    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setSymbol(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 10000 : 100) }
     const toggle = (id: string) => setTeam(t => (t.includes(id) ? t.filter(x => x !== id) : [...t, id]))
 
     const submit = async () => {
@@ -102,7 +103,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
         try {
             const sym = symbol.trim().toUpperCase()
             const data: MarketRef = { market, exchange: market === 'futures' ? 'EXCHANGE_2' : sym.endsWith('/USDT') ? 'c2c1' : 'coinswitchx', symbol: sym, intervalMin: tf, days: 30 }
-            const costs = market === 'spot' ? (fee != null ? { fee } : undefined) : { leverage: lev }
+            const costs = market === 'spot' ? (fee != null ? { fee } : undefined) : { leverage: lev as number }
             if (tab === 'team') await agentsApi.preset({ data, costs, capital, picks: team })
             else {
                 let strategy: StrategyIn
@@ -127,9 +128,21 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
                     <div><label>Symbol</label><input value={symbol} onChange={e => setSymbol(e.target.value)} autoCapitalize="characters" /></div>
                     <div><label>Candles</label><select value={tf} onChange={e => setTf(+e.target.value)}>{TIMEFRAMES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
                     <div><label>Capital per agent ({market === 'spot' ? (symbol.toUpperCase().split('/')[1] ?? 'INR') : 'USDT'})</label><input type="number" inputMode="decimal" value={capital} onChange={e => setCapital(+e.target.value)} /></div>
-                    {market === 'futures' && <div><label>Max leverage</label><input type="number" inputMode="decimal" value={lev} onChange={e => setLev(+e.target.value)} /></div>}
                     {tab === 'one' && <div><label>Name (optional)</label><input value={name} maxLength={12} onChange={e => setName(e.target.value)} /></div>}
                 </div>
+
+                {market === 'futures' && (
+                    <div style={{ gridColumn: '1 / -1' }}>
+                        <label>Leverage &mdash; you choose</label>
+                        <div className="a-chips">
+                            {LEVS.map(n => <button key={n} className={`a-chip ${lev === n ? 'on' : ''}`} onClick={() => setLev(n)}>{n}x</button>)}
+                            <input type="number" inputMode="decimal" min={1} max={50} placeholder="other" style={{ width: 90, minHeight: 32 }} value={lev != null && !LEVS.includes(lev) ? lev : ''}
+                                onChange={e => setLev(e.target.value === '' ? null : +e.target.value)} />
+                        </div>
+                        <div className="a-note" style={{ color: lev == null ? 'var(--down)' : undefined }}>
+                            {lev == null ? 'Pick a leverage to continue. There is no default.' : `Each agent: a position is the strategy's signal x ${lev} x capital, so ${capital} fully in holds ${(capital * lev).toLocaleString('en-US')}. A move of roughly ${(100 / lev).toFixed(1)}% against it would liquidate it (less after fees and maintenance margin). Paper trading does not simulate liquidation yet.`}
+                        </div>
+                    </div>)}
 
                 {tab === 'one' && (<>
                     <label>Strategy</label>
@@ -152,7 +165,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
 
                 {market === 'spot' && fee != null && <div className="a-note">Using your real spot fee: {fee}% (+ GST).</div>}
                 {err && <div className="a-err" style={{ marginTop: 10 }}>{err}</div>}
-                <button className="a-btn main" style={{ width: '100%', marginTop: 14 }} disabled={busy || capital <= 0 || (tab === 'team' && team.length === 0)} onClick={submit}>
+                <button className="a-btn main" style={{ width: '100%', marginTop: 14 }} disabled={busy || capital <= 0 || (market === 'futures' && !lev) || (tab === 'team' && team.length === 0)} onClick={submit}>
                     {busy ? 'Starting...' : tab === 'team' ? `Launch ${team.length} agent${team.length === 1 ? '' : 's'}` : 'Launch agent'}
                 </button>
             </div>
@@ -196,7 +209,7 @@ function AgentDetail({ a, q, fills, busy, onClose, onChart, onToggle, onCloseTra
                     <div className="a-mini"><span>P&amp;L</span><b className={up ? 'a-pos' : 'a-neg'}><Money v={a.pnl} q={q} sign /></b></div>
                     <div className="a-mini"><span>Win rate</span><b>{a.winRate != null ? Math.round(a.winRate) + '%' : '\u2014'}</b><small>{a.closed} closed trades</small></div>
                     <div className="a-mini"><span>Max drawdown</span><b className="a-neg">{maxDd(a.curve).toFixed(1)}%</b><small>since it started</small></div>
-                    <div className="a-mini"><span>Candles evaluated</span><b>{a.signals.toLocaleString('en-US')}</b></div>
+                    <div className="a-mini"><span>Live candles seen</span><b>{a.signals.toLocaleString('en-US')}</b><small>closed since start</small></div>
                     <div className="a-mini"><span>Wants now</span><b>{a.target.toFixed(2)}</b><small>of capital</small></div>
                 </div>
 
@@ -206,11 +219,19 @@ function AgentDetail({ a, q, fills, busy, onClose, onChart, onToggle, onCloseTra
                     : <div className="a-mono" style={{ fontSize: 13 }}><b className={side === 'long' ? 'a-pos' : 'a-neg'}>{side.toUpperCase()}</b> {Number(acct.units).toFixed(6)} @ {fmt(Number(acct.entryPrice), 2)} &middot;
                         <span className={Number(acct.unrealizedPnl) >= 0 ? 'a-pos' : 'a-neg'}> {sgn(Number(acct.unrealizedPnl))}{fmt(Math.abs(Number(acct.unrealizedPnl)), 2)} ({sgn(Number(acct.unrealizedPct))}{Math.abs(Number(acct.unrealizedPct)).toFixed(2)}%)</span></div>}
 
+                {a.closed === 0 && a.pnl === 0 && side === 'flat' && (
+                    <div className="a-warn" style={{ margin: '12px 0 0' }}>
+                        <b>No trade yet.</b>{' '}
+                        {a.signals === 0 ? 'No live candle has closed since this agent started, so it has only replayed history. It decides when a candle closes (a ' + tfName(a.data.intervalMin) + ' candle can take up to ' + tfName(a.data.intervalMin) + ').'
+                            : Math.abs(a.target) < 0.01 ? 'Its strategy currently wants no position (no signal). That is normal: it waits for its entry condition.'
+                                : 'Its strategy wants a position (' + a.target.toFixed(2) + ' of capital) but none was opened. Usually the size is below the exchange minimum order for ' + a.data.symbol + ' or inside the rebalance band. See the activity below.'}
+                    </div>)}
+
                 <label>Equity curve</label>
                 <Spark pts={a.curve} color={a.color} fill height={90} />
 
                 <label>Strategy settings</label>
-                <div className="a-note" style={{ margin: 0 }}>{params.length ? params.map(([k, v]) => `${k} ${v}`).join(' \u00B7 ') : 'default settings'} &middot; capital {fmt(a.capital, 0)} {q === 'INR' ? 'INR' : 'USDT'}</div>
+                <div className="a-note" style={{ margin: 0 }}>{params.length ? params.map(([k, v]) => `${k} ${v}`).join(' \u00B7 ') : 'default settings'} &middot; capital {fmt(a.capital, 0)} {q === 'INR' ? 'INR' : 'USDT'}{a.costs?.leverage ? ` \u00B7 leverage ${a.costs.leverage}x` : ''}</div>
 
                 <label>Latest trades</label>
                 {fills.length === 0 ? <div className="a-note" style={{ margin: 0 }}>No trades yet. An agent acts when a candle closes.</div> : (
@@ -223,6 +244,8 @@ function AgentDetail({ a, q, fills, busy, onClose, onChart, onToggle, onCloseTra
                             </div>))}
                     </div>)}
                 {(a.error || a.state === 'error' || a.state === 'halted') && <div className="a-err" style={{ marginTop: 10 }}>{a.error || a.note}</div>}
+                <label>Recent activity</label>
+                <div className="a-note a-mono" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.log && a.log.length ? a.log.join('\n') : 'Nothing logged yet.'}</div>
 
                 <div className="a-ctl" style={{ justifyContent: 'flex-start', marginTop: 14 }}>
                     <button className="a-btn main tiny" onClick={onChart}>Show on chart</button>
@@ -297,11 +320,13 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
         const others = agents.length - best.length
         const text = `Create a portfolio of ${picks.length} strateg${picks.length === 1 ? 'y' : 'ies'} on ${d.symbol} (${tfName(d.intervalMin)} candles) in the workbench?\n\n` +
             (others > 0 ? `${others} agent(s) on a different market or timeframe are left out (a portfolio runs on one).\n` : '') + (skipped.length ? `Skipped: ${skipped.join('; ')}.\n` : '') +
+            (picks.length >= 2 ? `\nIt will only trade when at least ${Math.max(2, Math.ceil(picks.length / 2))} of the ${picks.length} strategies agree on a side, and otherwise stay flat and wait (you can change this).\n` : '') +
             `\nNothing starts. You will run the backtest, then set your limits and type the confirmation in the Paper / Live tab.`
         if (!window.confirm(text)) return
         let old: Record<string, unknown> = {}
         try { old = JSON.parse(localStorage.getItem('csbot.state.v1') || '{}') || {} } catch { /* start fresh */ }
-        localStorage.setItem('csbot.state.v1', JSON.stringify({ ...old, data: { ...d, days: DAYS_FOR[d.intervalMin] ?? 365 }, sid: 'portfolio', pick: 'portfolio', members: picks, memberParams, params: {} }))
+        const minAgree = picks.length >= 2 ? Math.max(2, Math.ceil(picks.length / 2)) : 0     // consensus rule: about half of the strategies must agree before it trades
+        localStorage.setItem('csbot.state.v1', JSON.stringify({ ...old, data: { ...d, days: DAYS_FOR[d.intervalMin] ?? 365 }, sid: 'portfolio', pick: 'portfolio', members: picks, memberParams, memberWeights: {}, params: minAgree ? { minAgree } : {} }))
         sessionStorage.setItem('csbot.tab', 'strategy')
         onBack()
     }
@@ -353,7 +378,7 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
                             <div className="a-kpi"><span>System balance</span><b><Money v={c.equity} q={q} /></b><small>initial capital <Money v={c.capital} q={q} d={0} /></small></div>
                             <div className="a-kpi"><span>Combined P&amp;L</span><b className={pnlUp ? 'a-pos' : 'a-neg'}><Money v={c.pnl} q={q} sign /></b><small>{sgn(c.pnlPct)}{Math.abs(c.pnlPct).toFixed(2)}% on capital</small></div>
                             <div className="a-kpi"><span>Win rate</span><b style={{ color: c.winRate != null && c.winRate >= 50 ? 'var(--up)' : undefined }}>{c.winRate != null ? c.winRate.toFixed(1) + '%' : '\u2014'}</b><small>{c.closed} closed trades</small></div>
-                            <div className="a-kpi"><span>Signals processed</span><b>{c.signals.toLocaleString('en-US')}</b><small>candles evaluated by agents</small></div>
+                            <div className="a-kpi"><span>Live candles evaluated</span><b>{c.signals.toLocaleString('en-US')}</b><small>closed since start (warm-up not counted)</small></div>
                             <div className="a-kpi"><span>Active agents</span><b>{String(c.active).padStart(2, '0')}<em>/ {String(c.total).padStart(2, '0')}</em></b><small>running now</small></div>
                         </section>
 

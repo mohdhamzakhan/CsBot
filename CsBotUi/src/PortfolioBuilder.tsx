@@ -3,10 +3,13 @@ import type { SavedScript, ScriptTemplate, StrategyDef } from './api'
 type Props = {
     members: string[]; onChange: (m: string[]) => void
     templates: ScriptTemplate[]; builtins: StrategyDef[]; saved: SavedScript[]; futures: boolean
+    weights: Record<string, number>; onWeights: (w: Record<string, number>) => void   // rank = number of votes each strategy carries (default 1)
 }
 
 /** Pick the strategies that will share one capital. The risk settings below it are the normal numeric settings of the "portfolio" strategy. */
-export default function PortfolioBuilder({ members, onChange, templates, builtins, saved, futures }: Props) {
+export default function PortfolioBuilder({ members, onChange, templates, builtins, saved, futures, weights, onWeights }: Props) {
+    const nameOf = (k: string) => (k.startsWith('t:') ? templates.find(t => t.id === k.slice(2))?.name : k.startsWith('b:') ? builtins.find(b => b.id === k.slice(2))?.name : k.slice(2)) ?? k
+    const votes = members.reduce((s, k) => s + (weights[k] > 0 ? weights[k] : 1), 0)
     const toggle = (k: string) => onChange(members.includes(k) ? members.filter(x => x !== k) : [...members, k])
     const chip = (k: string, label: string, title?: string) => (
         <button key={k} title={title} onClick={() => toggle(k)}
@@ -29,6 +32,20 @@ export default function PortfolioBuilder({ members, onChange, templates, builtin
             <div className="note" style={{ color: tooMany || members.length === 0 ? 'var(--down)' : undefined }}>
                 {members.length === 0 ? 'Pick at least one strategy.' : tooMany ? 'At most 8 strategies.' : `Each gets an equal ${(100 / members.length).toFixed(0)}% share of the position budget.`}
             </div>
+            {members.length > 0 && (<>
+                <label>Rank (votes) of each strategy &mdash; total {votes}</label>
+                {members.map(k => (
+                    <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0' }}>
+                        <span style={{ flex: 1, fontSize: 12.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf(k)}</span>
+                        <input type="number" inputMode="decimal" min={0.5} max={5} step={0.5} value={weights[k] ?? 1} style={{ width: 80 }}
+                            onChange={e => onWeights({ ...weights, [k]: Math.min(5, Math.max(0.5, +e.target.value || 1)) })} />
+                    </div>))}
+                <div className="note">
+                    <b style={{ color: 'var(--text)' }}>Consensus rule.</b> Set <b>Minimum agreement (votes)</b> below (0 = off). A side is only traded when the strategies holding it carry at least that many votes;
+                    otherwise the portfolio stays flat and waits for the next signal. A more trusted strategy can carry more votes (rank 2 = 2 votes). Only the agreeing strategies size the position,
+                    and once in, it is held while the agreeing votes stay at or above <b>Hold while agreement &ge;</b> (0 = one less than the minimum).
+                </div>
+            </>)}
             <div className="note">
                 <b style={{ color: 'var(--text)' }}>How the risk controls work.</b> The strategies are averaged into <b>one</b> position, so opposite signals cancel instead of fighting. The
                 position can never exceed {futures ? 'your leverage cap' : '100% of capital'}. <b>Risk scale</b> multiplies the position (1 = if all agree it is fully invested; above 1 needs futures leverage).

@@ -177,6 +177,7 @@ public sealed class ScannerManager
         var m = Api.ParseMarket(r.Market);
         int variants = Math.Clamp(r.Variants ?? 4, 1, 8);
         var cost = Api.BuildCost(m, r.Costs);
+        double lev = Leverage.Require(m, r.Costs);          // futures: you must choose the leverage
         var cells = new List<ScanCell>();
         foreach (var pick in r.Picks.Distinct())
         {
@@ -190,8 +191,9 @@ public sealed class ScannerManager
                         var strat = new StrategyIn(sid, pd, null, code);
                         double bpy = 365.25 * 1440 / tf;
                         Func<IStrategy> factory; double band;
-                        try { (factory, band) = StrategyRegistry.Create(strat.Id, strat.Params, null, m, bpy, cost.MaxLeverage, strat.Code); }
+                        try { (factory, band) = StrategyRegistry.Create(strat.Id, strat.Params, null, m, bpy, 1, strat.Code); }
                         catch (ArgumentException) { continue; }          // invalid combination (e.g. fast EMA >= slow EMA)
+                        factory = Leverage.Apply(factory, lev);
                         string ptxt = string.Join(" \u00B7 ", v.Select(x => $"{x.Key} {x.Value:0.##}"));
                         string raw = $"{m}|{sym}|{tf}|{pick}|{ptxt}";
                         string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..10].ToLowerInvariant();

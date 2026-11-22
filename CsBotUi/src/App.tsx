@@ -98,6 +98,8 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     const resultsRef = useRef<HTMLDivElement>(null)
     const [keysOpen, setKeysOpen] = useState(false)
     const askedKeys = useRef(false)
+    const [memberWeights, setMemberWeights] = useState<Record<string, number>>(saved0.memberWeights ?? {})   // rank = votes per strategy (default 1)
+    const [memberParams, setMemberParams] = useState<Record<string, Record<string, number>>>(saved0.memberParams ?? {})   // tuned settings per member, filled by "Set up as a portfolio"
 
     useEffect(() => {
         api.health().then(h => { setHealth(h); if (!h.hasKeys && h.canEditKeys !== false && !askedKeys.current) { askedKeys.current = true; setKeysOpen(true) } }).catch(e => setErr(e.message))
@@ -157,7 +159,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     }, [def])
     useEffect(() => {
         last.current[data.market] = { exchange: data.exchange, symbol: data.symbol, intervalMin: data.intervalMin, days: data.days }
-        try { localStorage.setItem(STORE, JSON.stringify({ data, sid, pick, code, params, costs, startCash, last: last.current, members })) } catch { /* storage unavailable */ }
+        try { localStorage.setItem(STORE, JSON.stringify({ data, sid, pick, code, params, costs, startCash, last: last.current, members, memberParams, memberWeights })) } catch { /* storage unavailable */ }
     }, [data, sid, pick, code, params, costs, startCash, members])
 
     const futures = data.market === 'futures'
@@ -367,16 +369,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
                             {sid !== 'rules' && sid !== 'script' && def?.params.map(p => (
                                 <div key={p.key}><label>{p.label}</label>
                                     <input type="number" inputMode="decimal" min={p.min} max={p.max} step={p.step} value={params[p.key] ?? p.default} onChange={e => setParams({ ...params, [p.key]: +e.target.value })} /></div>))}
-                            {sid === 'portfolio' && (
-                                <PortfolioBuilder
-                                    members={members}
-                                    onChange={setMembers}
-                                    templates={templates}
-                                    builtins={builtins}
-                                    saved={saved}
-                                    futures={futures}
-                                />
-                            )}
+                            {sid === 'portfolio' && <PortfolioBuilder members={members} onChange={setMembers} templates={templates} builtins={builtins} saved={saved} futures={futures} weights={memberWeights} onWeights={setMemberWeights} />}
                             {sid === 'rules' && <RuleBuilder rules={rules} onChange={setRules} futures={futures} />}
                             {sid === 'script' && <ScriptEditor code={code} setCode={setCode} params={params} setParams={setParams} hidePickers onInputs={setScriptInputs}
                                 onSavedChanged={name => { api.scriptSaved().then(setSaved).catch(() => { }); if (name) setPick('s:' + name) }} />}

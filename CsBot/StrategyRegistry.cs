@@ -33,12 +33,13 @@ public static class StrategyRegistry
             "Build entry/exit conditions from indicators. Tested with the same costs and gate as the built-ins.",
             "Whatever you test. Each extra rule you tweak increases overfitting risk; rely on the walk-forward check.",
             new[] { P("band", "Rebalance band", 0.15, 0.05, 0.5, 0.05) }),
-        new StrategyDef("portfolio", "Portfolio (several strategies, one capital, risk limits)",
+       new StrategyDef("portfolio", "Portfolio (several strategies, one capital, risk limits)",
     "Runs the strategies you pick on ONE capital as a single position: opposite signals cancel, size is capped, and drawdown breakers cut or stop the position.",
     "Combining several strategies smooths the ride but cannot create an edge that none of them has. Judge it by its drawdown and by out-of-sample tests, not only its return.",
     new[] { P("riskScale", "Risk scale (x)", 1, 0.25, 3, 0.25), P("softDd", "Soft drawdown limit % (halve position)", 8, 2, 30, 1),
             P("hardDd", "Hard drawdown limit % (go flat)", 15, 4, 50, 1), P("stratDd", "Bench a strategy after drawdown %", 12, 3, 40, 1),
-            P("cooldown", "Cooldown (bars)", 24, 1, 400, 1), P("band", "Rebalance band", 0.1, 0.02, 0.5, 0.02) }),
+            P("cooldown", "Cooldown (bars)", 24, 1, 400, 1), P("band", "Rebalance band", 0.1, 0.02, 0.5, 0.02),
+            P("minAgree", "Minimum agreement, in votes (0 = off)", 0, 0, 16, 0.5), P("exitAgree", "Hold while agreement >= (0 = minimum - 1)", 0, 0, 16, 0.5) }),
     };
 
     private static ParamDef P(string k, string l, double d, double mn, double mx, double st) => new(k, l, d, mn, mx, st);

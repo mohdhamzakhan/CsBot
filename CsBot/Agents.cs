@@ -120,12 +120,14 @@ public sealed class AgentManager
     private static string QuoteOf(MarketRef d) =>
         d.Market.Equals("futures", StringComparison.OrdinalIgnoreCase) ? "USDT" : (d.Symbol.Split('/').LastOrDefault() ?? "INR").ToUpperInvariant();
 
-    private static Trader Build(TraderReq r, ExecutorState? restore)
+    private static Trader Build(TraderReq r, ExecutorState? restore, bool strict = true)
     {
         var m = Api.ParseMarket(r.Data.Market);
         var cost = Api.BuildCost(m, r.Costs);
+        double lev = strict ? Leverage.Require(m, r.Costs) : (m == Market.Futures ? Math.Clamp(r.Costs?.Leverage ?? 1, 1, Leverage.Max) : 1);   // new agents must choose; older saved ones keep what they had
         double bpy = 365.25 * 1440 / r.Data.IntervalMin;
-        var (factory, band) = StrategyRegistry.Create(r.Strategy.Id, r.Strategy.Params, r.Strategy.Rules, m, bpy, cost.MaxLeverage, r.Strategy.Code);   // throws ArgumentException on a bad strategy
+        var (factory0, band) = StrategyRegistry.Create(r.Strategy.Id, r.Strategy.Params, r.Strategy.Rules, m, bpy, 1, r.Strategy.Code);   // strategy weights stay within 1x ...
+        var factory = Leverage.Apply(factory0, lev);                                                                                        // ... and YOUR leverage scales the position
         var cfg = new TraderConfig
         {
             Mode = "paper",
@@ -178,7 +180,7 @@ public sealed class AgentManager
                 var a = new Agent { Id = af.Id, Name = af.Name, Color = af.Color, Req = req, ReqJson = af.ReqJson, Quote = QuoteOf(req.Data), Created = af.Created, Wanted = af.WasRunning };
                 a.Role = StrategyInfo.Describe(req.Strategy.Id, req.Strategy.Params, req.Strategy.Code).Name;
                 a.Curve.AddRange(af.Curve ?? Array.Empty<double[]>());
-                a.T = Build(req, af.Exec);
+                a.T = Build(req, af.Exec, strict: false);
                 lock (_l) { if (_a.Count >= Max) break; _a.Add(a); }
                 if (af.WasRunning && CoinSwitchClient.HasEnvKeys) a.T.Start();
             }
@@ -307,7 +309,7 @@ public sealed class AgentManager
         if (a.T.IsRunning) return true;
         if (!CoinSwitchClient.HasEnvKeys) throw new InvalidOperationException("Connect your CoinSwitch API keys first.");
         var state = a.T.ExportState();                // a stopped trader cannot restart: build a new one that carries the same account
-        a.T = Build(a.Req, state); a.Wanted = true; a.T.Start();
+        a.T = Build(a.Req, state, strict: false); a.Wanted = true; a.T.Start();
         Save(); return true;
     }
 
@@ -372,6 +374,7 @@ public sealed class AgentManager
                 signals = t.Signals,
                 error = t.LastError,
                 note = t.LastLog(),
+                log = t.LogTail(8),
                 curve
             };
         }).ToList();

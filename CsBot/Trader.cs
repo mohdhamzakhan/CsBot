@@ -279,6 +279,7 @@ public sealed class Trader
     public double Equity() => Mark > 0 ? _ex.Equity(Mark) : double.NaN;
     public ExecutorState ExportState() => _ex.Export();
     public string LastLog() { lock (_log) return _log.Count > 0 ? _log[^1] : ""; }
+    public string[] LogTail(int n) { lock (_log) return _log.TakeLast(n).ToArray(); }
     public Fill[] FillsCopy() { for (int i = 0; i < 3; i++) { try { return _ex.Fills.ToArray(); } catch { } } return Array.Empty<Fill>(); }
     public TraderConfig Config => _cfg;
     /// <summary>Resources (API client) kept alive until the trader is replaced, so the kill switch can still flatten.</summary>
