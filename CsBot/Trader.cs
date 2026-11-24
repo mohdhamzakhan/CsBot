@@ -280,6 +280,8 @@ public sealed class Trader
     public ExecutorState ExportState() => _ex.Export();
     public string LastLog() { lock (_log) return _log.Count > 0 ? _log[^1] : ""; }
     public string[] LogTail(int n) { lock (_log) return _log.TakeLast(n).ToArray(); }
+    public DateTime NewestSeen { get; private set; }
+    public double? CheckAgeSec => _lastCheck == default ? null : (DateTime.UtcNow - _lastCheck).TotalSeconds;
     public Fill[] FillsCopy() { for (int i = 0; i < 3; i++) { try { return _ex.Fills.ToArray(); } catch { } } return Array.Empty<Fill>(); }
     public TraderConfig Config => _cfg;
     /// <summary>Resources (API client) kept alive until the trader is replaced, so the kill switch can still flatten.</summary>
@@ -425,7 +427,13 @@ public sealed class Trader
             }
             if (hist.Count < _strat.WarmupBars) { _state = "error"; Log($"Only {hist.Count} bars available; need {_strat.WarmupBars}."); return; }
             Decision d = default;
-            foreach (var c in hist) { d = _strat.OnCandle(c); Signals++; _lastBar = c.Time; _lastPrice = c.Close; }   // warm-up only: no orders  // warm-up only: no orders
+            foreach (var c in hist) 
+            { 
+                d = _strat.OnCandle(c);
+                //Signals++; 
+                _lastBar = c.Time; 
+                _lastPrice = c.Close; 
+            }   // warm-up only: no orders  // warm-up only: no orders
             _target = d.TargetWeight; _mark = _lastPrice;
             _dayStart = _ex.Equity(_lastPrice); _dayStartDate = DateTime.UtcNow.Date;
             Log($"Warm-up done on {hist.Count} bars. Strategy target weight now {_target:F2}. Syncing position...");
@@ -449,7 +457,9 @@ public sealed class Trader
                 List<Candle> recent;
                 try
                 {   // a failed candle request is NOT fatal: note it, wait a little, and try again
-                    recent = (await _fetch(8, ct)).Where(c => c.Time + step <= DateTime.UtcNow && c.Time > _lastBar).OrderBy(c => c.Time).ToList();
+                    var got = await _fetch(8, ct);
+                    if (got.Count > 0) NewestSeen = got.Max(c => c.Time);
+                    recent = got.Where(c => c.Time + step <= DateTime.UtcNow && c.Time > _lastBar).OrderBy(c => c.Time).ToList();
                     if (fetchErrors > 0) Log("Candle check works again.");
                     fetchErrors = 0; _lastError = ""; _lastCheck = DateTime.UtcNow;
                 }
@@ -477,7 +487,13 @@ public sealed class Trader
                     }
                     _target = dec.TargetWeight; _lastBar = c.Time; _lastPrice = c.Close; if (_mark <= 0) _mark = c.Close;
                     Log($"New closed bar {c.Time:yyyy-MM-dd HH:mm} close {c.Close} -> target weight {_target:F2}");
-                    await ExecuteAsync(ct);
+                    //await ExecuteAsync(ct);
+                    if (c.Time != recent[^1].Time) continue;                         // catching up: the strategy sees every bar, but we only trade on the newest
+                    double ageMin = (DateTime.UtcNow - (c.Time + step)).TotalMinutes;
+                    bool late = ageMin > 2 * _cfg.IntervalMin;
+                    if (late && _cfg.Mode == "live")
+                    { Log($"Live order skipped: this candle closed {ageMin:0} minutes ago (CoinSwitch's candle data is late). Waiting for fresh candles."); continue; }
+                    await ExecuteAsync(ct, late && _mark > 0 ? _mark : (double?)null);   // a late paper batch trades at today's price, not the old bar's
                 }
                 await RiskChecksAsync();
                 if (_ex.Halted) return;
@@ -489,10 +505,17 @@ public sealed class Trader
     }
 
     /// <summary>Daily-loss limit (live) and halt handling, using the live mark price.</summary>
+        private DateTime _lastReconcile;
     private async Task RiskChecksAsync()
     {
         if (_ex is LiveExecutor live)
         {
+            if (DateTime.UtcNow - _lastReconcile > TimeSpan.FromSeconds(15))
+            {
+                _lastReconcile = DateTime.UtcNow;
+                await _execLock.WaitAsync();
+                try { await live.ReconcileAsync(_cts.Token); } catch (Exception e) { Log("Position check error: " + e.Message); } finally { _execLock.Release(); }
+            }
             if (DateTime.UtcNow.Date != _dayStartDate) { _dayStartDate = DateTime.UtcNow.Date; _dayStart = _ex.Equity(Mark); }
             if (_cfg.Risk.DailyLossPct > 0 && _ex.Equity(Mark) < _dayStart * (1 - _cfg.Risk.DailyLossPct / 100))
                 live.Halt($"Daily loss limit {_cfg.Risk.DailyLossPct}% hit");
@@ -507,12 +530,12 @@ public sealed class Trader
         Persist(false);
     }
 
-    private async Task ExecuteAsync(CancellationToken ct)
+    private async Task ExecuteAsync(CancellationToken ct, double? price = null)
     {
         await _execLock.WaitAsync(ct);
         try
         {
-            var f = await _ex.RebalanceAsync(_target, _lastPrice, DateTime.UtcNow, ct);
+            var f = await _ex.RebalanceAsync(_target, price ?? _lastPrice, DateTime.UtcNow, ct);
             if (f != null) Log($"{_cfg.Mode.ToUpper()} fill: {f.Side} {f.Qty:0.#####} @ {f.Price:0.##} (fee {f.Fee:0.##})");
             if (_ex is LiveExecutor l && l.Halted) _state = "halted";
         }
@@ -538,6 +561,7 @@ public sealed class Trader
             priceAgeSec = _markAt == default ? (double?)null : (DateTime.UtcNow - _markAt).TotalSeconds,
             priceError = _markErr,
             lastCheckAgeSec = _lastCheck == default ? (double?)null : (DateTime.UtcNow - _lastCheck).TotalSeconds,
+            newestCandle = NewestSeen == default ? (long?)null : new DateTimeOffset(DateTime.SpecifyKind(NewestSeen, DateTimeKind.Utc)).ToUnixTimeSeconds(),
             lastError = _lastError,
             lastBar = _lastBar == default ? null : (long?)new DateTimeOffset(_lastBar, TimeSpan.Zero).ToUnixTimeSeconds(),
             nextDecision = _lastBar == default ? null : (long?)(new DateTimeOffset(_lastBar, TimeSpan.Zero).ToUnixTimeSeconds() + 2L * _cfg.IntervalMin * 60),

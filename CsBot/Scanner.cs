@@ -13,7 +13,7 @@ namespace CsBot;
 // A cell only starts trading after the strategy has gone flat once, so it reacts to FRESH signals.
 // ============================================================================================
 
-public sealed record ScanReq(string Market, List<string> Symbols, List<int> Timeframes, List<string> Picks, int? Variants, double Capital, CostIn? Costs);
+public sealed record ScanReq(string Market, List<string> Symbols, List<int> Timeframes, List<string> Picks, int? Variants, double Capital, CostIn? Costs, Dictionary<string, double>? Protect = null);
 public sealed record ScanSignal(long T, string Cell, string Name, string Symbol, int Tf, string Params, string From, string To, double Price);
 internal sealed record CellState(string Id, Dictionary<string, double> Pf, List<Fill> Fills, string Stance, bool Armed, double Peak, double MaxDd, long LastSignalAt, string LastSignal);
 internal sealed record ScanFile(ScanReq Req, bool Running, DateTime Started, List<CellState> Cells, List<ScanSignal> Signals);
@@ -188,12 +188,14 @@ public sealed class ScannerManager
                     {
                         string sym = symRaw.Trim().ToUpperInvariant();
                         var pd = v.ToDictionary(k => k.Key, k => JsonSerializer.SerializeToElement(k.Value));
+                        foreach (var kv in r.Protect ?? new()) if (ProtectionSpec.Keys.Contains(kv.Key)) pd[kv.Key] = JsonSerializer.SerializeToElement(kv.Value);   // stop / take profit, same for every combination
                         var strat = new StrategyIn(sid, pd, null, code);
                         double bpy = 365.25 * 1440 / tf;
                         Func<IStrategy> factory; double band;
-                        try { (factory, band) = StrategyRegistry.Create(strat.Id, strat.Params, null, m, bpy, 1, strat.Code); }
+                        var (cleanP, protect) = ProtectionSpec.Split(strat.Params);
+                        try { (factory, band) = StrategyRegistry.Create(strat.Id, cleanP, null, m, bpy, 1, strat.Code); }
                         catch (ArgumentException) { continue; }          // invalid combination (e.g. fast EMA >= slow EMA)
-                        factory = Leverage.Apply(factory, lev);
+                        factory = Protection.Apply(Leverage.Apply(factory, lev), protect);
                         string ptxt = string.Join(" \u00B7 ", v.Select(x => $"{x.Key} {x.Value:0.##}"));
                         string raw = $"{m}|{sym}|{tf}|{pick}|{ptxt}";
                         string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..10].ToLowerInvariant();

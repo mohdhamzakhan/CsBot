@@ -23,6 +23,8 @@ import type { OptDef } from './OptimizePanel'
 import OptimizeResults from './OptimizeResults'
 import ResearchPanel from './ResearchPanel'
 import OptionsLab from './OptionsLab'
+import ProtectionFields, { PROTECT_KEYS } from './ProtectionFields'
+import type { Protect } from './ProtectionFields'
 import TriggerCard, { act, actColor } from './TriggerCard'
 import type { TriggerResult } from './api'
 import type { Curves } from './api'
@@ -155,7 +157,7 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
     useEffect(() => {
         if (!def) return
         if (restoredParams.current) { restoredParams.current = false; return }   // keep the settings remembered from the last visit once
-        setParams(Object.fromEntries(def.params.map(p => [p.key, p.default])))
+        setParams(cur => ({ ...Object.fromEntries(def.params.map(p => [p.key, p.default])), ...Object.fromEntries(PROTECT_KEYS.filter(k => cur[k] != null).map(k => [k, cur[k]])) }))
     }, [def])
     useEffect(() => {
         last.current[data.market] = { exchange: data.exchange, symbol: data.symbol, intervalMin: data.intervalMin, days: data.days }
@@ -381,6 +383,8 @@ function Workspace({ onLogout, onAgents }: { onLogout?: () => void; onAgents: ()
                             <h3>Data</h3>
                             <div className="row">
                                 <div><label>History for backtests (days)</label><input type="number" inputMode="numeric" value={data.days} onChange={e => setData({ ...data, days: +e.target.value })} /></div>
+                                <ProtectionFields variant="bench" values={params as Protect} onChange={p => setParams(cur => ({ ...cur, ...p }))}
+                                    lev={futures ? costs.leverage : 1} showExchange={futures} />
                                 <div><label>Exchange</label><input value={data.exchange} disabled={futures} onChange={e => setData({ ...data, exchange: e.target.value })} /></div>
                             </div>
                             <div className="note">{futures ? 'Futures are USDT-margined perpetuals (symbol like BTCUSDT).' : 'coinswitchx = INR pairs, c2c1 / c2c2 = USDT pairs.'} Changing the timeframe, symbol or history reloads the chart automatically.</div>

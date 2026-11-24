@@ -1,7 +1,7 @@
 import { call } from './api'
 import type { Market } from './api'
 
-export type ScanReq = { market: Market; symbols: string[]; timeframes: number[]; picks: string[]; variants: number; capital: number; costs?: { fee?: number; leverage?: number } }
+export type ScanReq = { market: Market; symbols: string[]; timeframes: number[]; picks: string[]; variants: number; capital: number; costs?: { fee?: number; leverage?: number }; protect?: Record<string, number> }
 export type ScanRow = {
     id: string; name: string; symbol: string; tf: number; params: string; capital: number; equity: number; pnlPct: number
     trades: number; closed: number; winRate: number | null; maxDd: number; stance: string; armed: boolean; ready: boolean

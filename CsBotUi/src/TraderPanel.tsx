@@ -202,6 +202,10 @@ export default function TraderPanel({ data, strategy, costs, liveEnabled, hasKey
                         <div>Strategy wants: <b>{st.targetWeight?.toFixed(2)}</b></div>
                         {st.nextDecision != null && st.running && <div style={{ gridColumn: '1 / span 2' }}>Next decision (candle close) in <b style={{ fontFamily: 'var(--mono)' }}>{countdown(st.nextDecision - now)}</b></div>}
                     </div>
+                    {st.newestCandle != null && (() => {
+                        const iv = st.config?.intervalMin ?? 5, behind = (now - (st.newestCandle + iv * 60)) / 60, late = behind > 2 * iv + 1
+                        return <div className={late ? 'warnbox' : 'note'}>Newest candle from CoinSwitch closed {Math.max(0, behind).toFixed(0)} min ago.{late ? ` That is more than ${2 * iv} minutes late: CoinSwitch is sending ${iv}-minute candles late, so the strategy cannot react in time.` : ''}</div>
+                    })()}
                     {acct && acct.lastOrderError && <div className="warnbox"><b>Last order problem</b> ({new Date(Number(acct.lastOrderErrorAt) * 1000).toLocaleString()})<br />{String(acct.lastOrderError)}</div>}
                     {st.lastError && st.running && <div className="warnbox">Trouble reaching CoinSwitch: {st.lastError}<br />Retrying automatically. Your position is kept and the trader keeps running.</div>}
                     <div className="note">The strategy acts only when a candle closes. Price, P&amp;L and equity follow the live market every few seconds.{st.running && st.lastCheckAgeSec != null ? ` Last candle check ${Math.round(st.lastCheckAgeSec)}s ago.` : ''} The trader runs on the server, so closing this page does not stop it.</div>

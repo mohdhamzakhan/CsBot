@@ -8,7 +8,7 @@ namespace CsBot;
 /// Position is tracked from confirmed fills only. NOT validated against the live exchange by the author - start tiny.
 /// Every failure to place or confirm an order is written to the log with what was attempted, what CoinSwitch answered and the likely cause.
 /// </summary>
-public sealed class LiveExecutor : IExecutor
+public sealed partial class LiveExecutor : IExecutor
 {
     private readonly CoinSwitchClient _cs; private readonly TraderConfig _cfg; private readonly double _band; private readonly Action<string> _log;
     private readonly List<Fill> _fills = new();
@@ -75,7 +75,8 @@ public sealed class LiveExecutor : IExecutor
 
     public async Task<Fill?> RebalanceAsync(double target, double price, DateTime time, CancellationToken ct)
     {
-        if (Halted) return null;
+        if (Halted && target != 0) return null;     // a halted trader may still CLOSE its position
+        await ReconcileAsync(ct);                   // exchange-side stops may have closed the position since the last look
         bool spot = _cfg.Market == Market.Spot;
         double maxLev = spot ? 1 : Math.Min(_cfg.Risk.MaxLeverage, _cfg.Cost.MaxLeverage);
         double w = Math.Clamp(target, spot ? 0 : -maxLev, maxLev);
@@ -194,7 +195,9 @@ public sealed class LiveExecutor : IExecutor
             Halt($"Market order {id} shows no fill. Check the CoinSwitch app before restarting.");
             return null;
         }
-        return Apply(side.ToLowerInvariant(), ex, avg > 0 ? avg : price, fee, time);
+        var applied = Apply(side.ToLowerInvariant(), ex, avg > 0 ? avg : price, fee, time);
+        await SyncProtectionAsync(ct);              // stop loss / take profit on the exchange for the position we now hold
+        return applied;
     }
 
     private Fill Apply(string side, double qty, double px, double fee, DateTime time)

@@ -273,5 +273,34 @@ public sealed class CoinSwitchClient : IDisposable
             new Dictionary<string, object> { ["exchange"] = FuturesExchange, ["symbol"] = symbol, ["leverage"] = leverage }, ct);
     }
 
+    // ---------------- protective orders (stop loss / take profit) ----------------
+    public async Task<JsonElement> FuturesPlaceTriggerAsync(string symbol, string side, string type, double triggerPrice, string clientId, CancellationToken ct = default)
+    {
+        var b = new Dictionary<string, object>
+        {
+            ["exchange"] = FuturesExchange,
+            ["symbol"] = symbol,
+            ["side"] = side,
+            ["order_type"] = type,
+            ["quantity"] = 0,
+            ["trigger_price"] = triggerPrice,
+            ["reduce_only"] = true,
+            ["client_order_id"] = clientId
+        };      // type: STOP_MARKET or TAKE_PROFIT_MARKET; quantity 0 = the whole position
+        using var d = await SendAsync(HttpMethod.Post, "/trade/api/v2/futures/order", null, b, ct);
+        return Data(d);
+    }
+    public async Task<JsonElement> FuturesOpenOrdersAsync(string symbol, CancellationToken ct = default)
+    {
+        using var d = await SendAsync(HttpMethod.Post, "/trade/api/v2/futures/orders/open", null,
+            new Dictionary<string, object> { ["exchange"] = FuturesExchange, ["symbol"] = symbol }, ct);
+        var data = Data(d);
+        return data.ValueKind == JsonValueKind.Object && data.TryGetProperty("orders", out var o) ? o.Clone() : data;
+    }
+    public async Task FuturesCancelAsync(string orderId, CancellationToken ct = default)
+    {
+        using var d = await SendAsync(HttpMethod.Delete, "/trade/api/v2/futures/order", null,
+            new Dictionary<string, object> { ["exchange"] = FuturesExchange, ["order_id"] = orderId }, ct);
+    }
     public void Dispose() => _http.Dispose();
 }

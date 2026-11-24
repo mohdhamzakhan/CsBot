@@ -10,7 +10,7 @@ namespace CsBot;
 // ============================================================================================
 
 public sealed record AgentReq(string? Name, MarketRef Data, StrategyIn Strategy, CostIn? Costs, double Capital);
-public sealed record PresetReq(MarketRef Data, CostIn? Costs, double Capital, List<string>? Picks, bool? Replace);
+public sealed record PresetReq(MarketRef Data, CostIn? Costs, double Capital, List<string>? Picks, bool? Replace, Dictionary<string, double>? Protect = null);
 
 internal sealed record AgentFile(string Id, string Name, string Color, string ReqJson, ExecutorState Exec, bool WasRunning, DateTime Created, double[][] Curve);
 internal sealed record AgentsFile(int Version, List<AgentFile> Agents, double[][] Combined, DateTime SessionStart);
@@ -126,8 +126,9 @@ public sealed class AgentManager
         var cost = Api.BuildCost(m, r.Costs);
         double lev = strict ? Leverage.Require(m, r.Costs) : (m == Market.Futures ? Math.Clamp(r.Costs?.Leverage ?? 1, 1, Leverage.Max) : 1);   // new agents must choose; older saved ones keep what they had
         double bpy = 365.25 * 1440 / r.Data.IntervalMin;
-        var (factory0, band) = StrategyRegistry.Create(r.Strategy.Id, r.Strategy.Params, r.Strategy.Rules, m, bpy, 1, r.Strategy.Code);   // strategy weights stay within 1x ...
-        var factory = Leverage.Apply(factory0, lev);                                                                                        // ... and YOUR leverage scales the position
+        var (cleanParams, protect) = ProtectionSpec.Split(r.Strategy.Params);                                                                  // stop / take-profit settings travel inside the strategy's settings
+        var (factory0, band) = StrategyRegistry.Create(r.Strategy.Id, cleanParams, r.Strategy.Rules, m, bpy, 1, r.Strategy.Code);              // strategy weights stay within 1x ...
+        var factory = Protection.Apply(Leverage.Apply(factory0, lev), protect);                                                                // ... YOUR leverage scales the position, then the protection sees its real size
         var cfg = new TraderConfig
         {
             Mode = "paper",
@@ -286,7 +287,9 @@ public sealed class AgentManager
         foreach (var id in picks)
         {
             var tpl = Templates.All.FirstOrDefault(t => t.Id == id) ?? throw new ArgumentException("Unknown ready-made script: " + id);
-            made.Add(Add(new AgentReq(null, r.Data, new StrategyIn("script", new Dictionary<string, JsonElement>(), null, tpl.Code), r.Costs, r.Capital)));
+            var prm = new Dictionary<string, JsonElement>();
+            foreach (var kv in r.Protect ?? new()) if (ProtectionSpec.Keys.Contains(kv.Key)) prm[kv.Key] = JsonSerializer.SerializeToElement(kv.Value);   // stop loss / take profit for every agent of the team
+            made.Add(Add(new AgentReq(null, r.Data, new StrategyIn("script", prm, null, tpl.Code), r.Costs, r.Capital)));
         }
         return made;
     }
@@ -375,6 +378,8 @@ public sealed class AgentManager
                 error = t.LastError,
                 note = t.LastLog(),
                 log = t.LogTail(8),
+                newestCandle = t.NewestSeen == default ? (long?)null : Unix(t.NewestSeen),
+                checkAgeSec = t.CheckAgeSec,
                 curve
             };
         }).ToList();

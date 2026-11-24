@@ -51,13 +51,21 @@ public static class StrategyRegistry
         {
             JsonValueKind.Number => e.GetDouble(),
             JsonValueKind.String when double.TryParse(e.GetString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) => v,
-            JsonValueKind.True => 1, JsonValueKind.False => 0, _ => def
+            JsonValueKind.True => 1,
+            JsonValueKind.False => 0,
+            _ => def
         };
+    }
+    public static (Func<IStrategy> Factory, double Band) Create(string id, Dictionary<string, JsonElement>? p, JsonElement? rules,
+    Market market, double barsPerYear, double maxLeverage, string? code = null)
+    {
+        var (f, band) = CreateCore(id, p, rules, market, barsPerYear, maxLeverage, code);
+        return (Protection.Apply(f, ProtectionSpec.FromParams(p)), band);   // stopPct / takePct / trailPct / guardPct, if set
     }
 
     /// <summary>Returns (factory, rebalanceBand). Throws ArgumentException for bad input.</summary>
-    public static (Func<IStrategy> Factory, double Band) Create(string id, Dictionary<string, JsonElement>? p, JsonElement? rules,
-        Market market, double barsPerYear, double maxLeverage, string? code = null)
+    private static (Func<IStrategy> Factory, double Band) CreateCore(string id, Dictionary<string, JsonElement>? p, JsonElement? rules,
+    Market market, double barsPerYear, double maxLeverage, string? code = null)
     {
         bool fut = market == Market.Futures;
         double maxW = fut ? maxLeverage : 1;
@@ -65,30 +73,30 @@ public static class StrategyRegistry
         switch (id)
         {
             case "trend_ema":
-            {
-                var pr = new TrendFollowingStrategy.Params((int)Num(p, "fast", 20), (int)Num(p, "slow", 100), 14, Num(p, "stopAtr", 3),
-                    Num(p, "targetVol", 0.4), 60, barsPerYear, maxW, fut, Num(p, "fixedSize", 0) > 0);
-                if (pr.FastEma >= pr.SlowEma) throw new ArgumentException("Fast EMA must be smaller than slow EMA.");
-                return (() => new TrendFollowingStrategy(pr), band);
-            }
+                {
+                    var pr = new TrendFollowingStrategy.Params((int)Num(p, "fast", 20), (int)Num(p, "slow", 100), 14, Num(p, "stopAtr", 3),
+                        Num(p, "targetVol", 0.4), 60, barsPerYear, maxW, fut, Num(p, "fixedSize", 0) > 0);
+                    if (pr.FastEma >= pr.SlowEma) throw new ArgumentException("Fast EMA must be smaller than slow EMA.");
+                    return (() => new TrendFollowingStrategy(pr), band);
+                }
             case "donchian":
                 return (() => new DonchianStrategy((int)Num(p, "entry", 55), (int)Num(p, "exit", 20), Num(p, "targetVol", 0.4), barsPerYear, maxW, fut, Num(p, "fixedSize", 0) > 0), band);
             case "tsmom":
                 return (() => new TsMomentumStrategy((int)Num(p, "lookback", 90), Num(p, "bandPct", 2), Num(p, "targetVol", 0.4), barsPerYear, maxW, fut), band);
             case "script":
-            {
-                if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("The script is empty.");
-                try { ScriptStrategy.Check(code); } catch (ScriptException e) { throw new ArgumentException(e.Message); }
-                var prm = p?.Keys.Where(k => k != "band").ToDictionary(k => k, k => Num(p, k, double.NaN));
-                return (() => ScriptStrategy.Create(code, prm, barsPerYear, maxW, fut), band);
-            }
+                {
+                    if (string.IsNullOrWhiteSpace(code)) throw new ArgumentException("The script is empty.");
+                    try { ScriptStrategy.Check(code); } catch (ScriptException e) { throw new ArgumentException(e.Message); }
+                    var prm = p?.Keys.Where(k => k != "band").ToDictionary(k => k, k => Num(p, k, double.NaN));
+                    return (() => ScriptStrategy.Create(code, prm, barsPerYear, maxW, fut), band);
+                }
             case "rules":
-            {
-                if (rules == null) throw new ArgumentException("Missing rules.");
-                var rs = RuleSet.FromJson(rules.Value);
-                var err = rs.Validate(fut); if (err != null) throw new ArgumentException(err);
-                return (() => new RuleStrategy(RuleSet.FromJson(rules.Value), maxW, fut), band);
-            }
+                {
+                    if (rules == null) throw new ArgumentException("Missing rules.");
+                    var rs = RuleSet.FromJson(rules.Value);
+                    var err = rs.Validate(fut); if (err != null) throw new ArgumentException(err);
+                    return (() => new RuleStrategy(RuleSet.FromJson(rules.Value), maxW, fut), band);
+                }
             case "portfolio":
                 return PortfolioFactory.Create(p, code, market, barsPerYear, maxW, fut);
             default: throw new ArgumentException("Unknown strategy: " + id);

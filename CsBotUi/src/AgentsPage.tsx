@@ -8,6 +8,8 @@ import AgentChart from './AgentChart'
 import RiskDesk from './RiskDesk'
 import ScannerPanel from './ScannerPanel'
 import { DAYS_FOR, TIMEFRAMES } from './TopBar'
+import ProtectionFields, { activeProtect } from './ProtectionFields'
+import type { Protect } from './ProtectionFields'
 
 const tfName = (m: number) => TIMEFRAMES.find(t => t[0] === m)?.[1] ?? `${m}m`
 const fmt = (x: number, d = 2) => x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })
@@ -78,6 +80,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
     const [tf, setTf] = useState(60)
     const [capital, setCapital] = useState(inr ? 10000 : 100)
     const [lev, setLev] = useState<number | null>(null)   // futures: no default, you choose
+    const [prot, setProt] = useState<Protect>(inr ? {} : { guardPct: 80 })   // visible and editable: exit at 80% of the way to liquidation
     const [name, setName] = useState('')
     const [builtins, setBuiltins] = useState<StrategyDef[]>([])
     const [templates, setTemplates] = useState<ScriptTemplate[]>([])
@@ -95,7 +98,7 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
         api.myFee('coinswitchx', 'BTC').then(r => { if (r.found && r.takerPct != null) setFee(r.takerPct) }).catch(() => { })   // use your real spot fee when known
     }, [])
 
-    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setSymbol(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 10000 : 100) }
+    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setProt(m === 'futures' ? { guardPct: 80 } : {}); setSymbol(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 10000 : 100) }
     const toggle = (id: string) => setTeam(t => (t.includes(id) ? t.filter(x => x !== id) : [...t, id]))
 
     const submit = async () => {
@@ -104,12 +107,13 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
             const sym = symbol.trim().toUpperCase()
             const data: MarketRef = { market, exchange: market === 'futures' ? 'EXCHANGE_2' : sym.endsWith('/USDT') ? 'c2c1' : 'coinswitchx', symbol: sym, intervalMin: tf, days: 30 }
             const costs = market === 'spot' ? (fee != null ? { fee } : undefined) : { leverage: lev as number }
-            if (tab === 'team') await agentsApi.preset({ data, costs, capital, picks: team })
+            const protect = activeProtect(prot)
+            if (tab === 'team') await agentsApi.preset({ data, costs, capital, picks: team, protect })
             else {
                 let strategy: StrategyIn
-                if (pick.startsWith('b:')) strategy = { id: pick.slice(2), params: {} }
-                else if (pick.startsWith('t:')) strategy = { id: 'script', params: {}, code: templates.find(t => t.id === pick.slice(2))?.code ?? '' }
-                else strategy = { id: 'script', params: {}, code: saved.find(s => s.name === pick.slice(2))?.code ?? '' }
+                if (pick.startsWith('b:')) strategy = { id: pick.slice(2), params: { ...protect } }
+                else if (pick.startsWith('t:')) strategy = { id: 'script', params: { ...protect }, code: templates.find(t => t.id === pick.slice(2))?.code ?? '' }
+                else strategy = { id: 'script', params: { ...protect }, code: saved.find(s => s.name === pick.slice(2))?.code ?? '' }
                 await agentsApi.add({ name: name.trim() || undefined, data, strategy, costs, capital })
             }
             onDone()
@@ -143,6 +147,8 @@ function AddDialog({ quote, onClose, onDone }: { quote: string | null; onClose: 
                             {lev == null ? 'Pick a leverage to continue. There is no default.' : `Each agent: a position is the strategy's signal x ${lev} x capital, so ${capital} fully in holds ${(capital * lev).toLocaleString('en-US')}. A move of roughly ${(100 / lev).toFixed(1)}% against it would liquidate it (less after fees and maintenance margin). Paper trading does not simulate liquidation yet.`}
                         </div>
                     </div>)}
+
+                <ProtectionFields variant="astra" values={prot} onChange={setProt} lev={market === 'futures' ? lev : 1} />
 
                 {tab === 'one' && (<>
                     <label>Strategy</label>
@@ -227,6 +233,15 @@ function AgentDetail({ a, q, fills, busy, onClose, onChart, onToggle, onCloseTra
                                 : 'Its strategy wants a position (' + a.target.toFixed(2) + ' of capital) but none was opened. Usually the size is below the exchange minimum order for ' + a.data.symbol + ' or inside the rebalance band. See the activity below.'}
                     </div>)}
 
+                {a.newestCandle != null && (() => {
+                    const iv = a.data.intervalMin, behind = (Date.now() / 1000 - (a.newestCandle + iv * 60)) / 60, late = behind > 2 * iv + 1
+                    return (
+                        <div className={late ? 'a-warn' : 'a-note'} style={{ margin: '12px 0 0' }}>
+                            Newest closed {tfName(iv)} candle received: {new Date(a.newestCandle * 1000).toISOString().slice(11, 16)} UTC, which closed {Math.max(0, behind).toFixed(0)} min ago.
+                            {late ? ` CoinSwitch is sending candles late (more than ${2 * iv} minutes behind), so this agent cannot act until new candles arrive.` : ''}
+                        </div>)
+                })()}
+
                 <label>Equity curve</label>
                 <Spark pts={a.curve} color={a.color} fill height={90} />
 
@@ -267,7 +282,7 @@ export default function AgentsPage({ onBack }: { onBack: () => void }) {
     const [err, setErr] = useState('')
     const [focus, setFocus] = useState('')
     const [openId, setOpenId] = useState('')
-    const [markAll, setMarkAll] = useState(false)
+    const [markAll, setMarkAll] = useState(true)      // show every agent's trades on the chart by default
     const [dlg, setDlg] = useState(false)
     const [lv, setLv] = useState<LiveTick | null>(null)
     const [busy, setBusy] = useState(false)

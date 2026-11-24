@@ -4,6 +4,8 @@ import type { Market, ScriptTemplate, StrategyDef } from './api'
 import { scannerApi } from './scannerApi'
 import type { ScanReq, ScanRow, ScanSnap } from './scannerApi'
 import { TIMEFRAMES } from './TopBar'
+import ProtectionFields, { activeProtect } from './ProtectionFields'
+import type { Protect } from './ProtectionFields'
 
 const LEVS = [2, 3, 5, 10, 15, 20]
 const DEFAULT_PICKS = ['t:ema_trend', 't:supertrend', 't:macd_trend', 't:donchian', 't:rsi_pullback', 't:bollinger_revert']
@@ -24,6 +26,7 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
     const [variants, setVariants] = useState(4)
     const [capital, setCapital] = useState(1000)
     const [lev, setLev] = useState<number | null>(null)   // futures: no default, you choose
+    const [prot, setProt] = useState<Protect>({ guardPct: 80 })
     const [fee, setFee] = useState<number | null>(null)
     const [templates, setTemplates] = useState<ScriptTemplate[]>([])
     const [builtins, setBuiltins] = useState<StrategyDef[]>([])
@@ -44,7 +47,8 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
     const req = useMemo<ScanReq>(() => ({
         market, symbols: symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean), timeframes: tfs, picks, variants, capital,
         costs: market === 'spot' ? (fee != null ? { fee } : undefined) : (lev != null ? { leverage: lev } : undefined),
-    }), [market, symbols, tfs, picks, variants, capital, fee, lev])
+        protect: activeProtect(prot),
+    }), [market, symbols, tfs, picks, variants, capital, fee, lev, prot])
 
     const running = !!snap?.running
     useEffect(() => {      // how many combinations will this make? (also catches invalid input before starting)
@@ -58,7 +62,7 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
         try { await fn(); if (ok) setMsg(ok); await load() } catch (e: any) { setErr(e.message) } finally { setBusy(false) }
     }
     const toggle = <T,>(list: T[], v: T, set: (l: T[]) => void) => set(list.includes(v) ? list.filter(x => x !== v) : [...list, v])
-    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setSymbols(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 100000 : 1000) }
+    const switchMarket = (m: Market) => { setMarket(m); setLev(null); setProt(m === 'futures' ? { guardPct: 80 } : {}); setSymbols(m === 'spot' ? 'BTC/INR' : 'BTCUSDT'); setCapital(m === 'spot' ? 100000 : 1000) }
 
     const rows = useMemo(() => {
         const r = (snap?.cells ?? []).filter(c => c.ready && c.closed >= minClosed && (!bothPos || (c.btReturn > 0 && c.pnlPct > 0)))
@@ -101,6 +105,7 @@ export default function ScannerPanel({ onPromoted }: { onPromoted: () => void })
                                     {lev == null ? 'Pick a leverage to continue. There is no default.' : `Each combination: a position is the strategy's signal x ${lev} x capital, so ${capital} fully in holds ${(capital * lev).toLocaleString('en-US')}. A move of roughly ${(100 / lev).toFixed(1)}% against it would liquidate it (less after fees and maintenance margin). Paper trading does not simulate liquidation yet.`}
                                 </div>
                             </div>)}
+                        <ProtectionFields variant="astra" values={prot} onChange={setProt} lev={market === 'futures' ? lev : 1} />
                         <label>Timeframes</label>
                         <div className="a-chips">{TIMEFRAMES.map(([v, l]) => <button key={v} className={`a-chip ${tfs.includes(v) ? 'on' : ''}`} onClick={() => toggle(tfs, v, setTfs)}>{l}</button>)}</div>
                         <label>Strategies ({picks.length} selected)</label>

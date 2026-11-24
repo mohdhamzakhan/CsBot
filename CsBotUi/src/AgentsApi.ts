@@ -6,7 +6,7 @@ export type AgentRow = {
     strategy: StrategyIn; costs: AgentCosts | null
     state: string; running: boolean; price: number; target: number; account: Record<string, any>
     equity: number; pnl: number; realized: number; closed: number; wins: number; winRate: number | null
-    signals: number; error: string; note: string; log: string[]; curve: number[][]
+    signals: number; error: string; note: string; log: string[]; newestCandle: number | null; checkAgeSec: number | null; curve: number[][]
 }
 export type AgentFill = { t: number; agent: string; name: string; color: string; symbol: string; side: 'buy' | 'sell'; price: number; qty: number; fee: number }
 export type AgentsSnap = {
@@ -19,7 +19,7 @@ export type AgentsSnap = {
 }
 export type AgentCosts = { fee?: number; leverage?: number }
 export type AgentBody = { name?: string; data: MarketRef; strategy: StrategyIn; costs?: AgentCosts; capital: number }
-export type PresetBody = { data: MarketRef; costs?: AgentCosts; capital: number; picks: string[]; replace?: boolean }
+export type PresetBody = { data: MarketRef; costs?: AgentCosts; capital: number; picks: string[]; replace?: boolean; protect?: Record<string, number> }
 
 export const agentsApi = {
     list: () => call<AgentsSnap>('/api/agents'),
